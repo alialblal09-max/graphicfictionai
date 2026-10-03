@@ -41,7 +41,7 @@ export default {
 
     if (url.pathname === "/api/image-enhance" && request.method === "POST") {
       try {
-        if (!env.AI) throw new Error("AI enhancement is not configured yet.");
+        if (!env.AI) throw new Error("Cloudflare Workers AI is not configured.");
 
         const body = await request.json();
         const dataUrl = String(body.image || "");
@@ -55,57 +55,157 @@ export default {
 
         const match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
         if (!match) throw new Error("Invalid image data.");
-        const inputBinary = atob(match[1]);
-        if (inputBinary.length > 20 * 1024 * 1024) {
-          throw new Error("Image is too large. Maximum input is 20 MB.");
+
+        const imageBase64 = match[1];
+        const inputBinary = atob(imageBase64);
+        if (inputBinary.length > 12 * 1024 * 1024) {
+          throw new Error("Image is too large. Maximum input is 12 MB.");
         }
 
-        // Pruna P-Image-Upscale is a dedicated image-to-image AI upscaler.
-        // It enhances fine details while preserving the original composition.
-        const sourceMP = Math.max(1, Math.round((inputBinary.length / 3) / 1_000_000));
-        let targetMP = 4;
-        let enhanceDetails = true;
-        let enhanceRealism = false;
+        // Read the original dimensions so the AI result keeps the same aspect ratio.
+        function getImageSize(binary) {
+          const b = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) b[i] = binary.charCodeAt(i);
+
+          // PNG
+          if (b.length >= 24 &&
+              b[0] === 137 && b[1] === 80 && b[2] === 78 && b[3] === 71) {
+            return {
+              width: (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19],
+              height: (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]
+            };
+          }
+
+          // JPEG
+          if (b.length >= 4 && b[0] === 255 && b[1] === 216) {
+            let i = 2;
+            while (i + 9 < b.length) {
+              if (b[i] !== 255) { i++; continue; }
+              const marker = b[i + 1];
+              const len = (b[i + 2] << 8) | b[i + 3];
+              if (marker >= 0xC0 && marker <= 0xC3) {
+                return {
+                  width: (b[i + 7] << 8) | b[i + 8],
+                  height: (b[i + 5] << 8) | b[i + 6]
+                };
+              }
+              if (len < 2) break;
+              i += 2 + len;
+            }
+          }
+
+          return {width:1024, height:1024};
+        }
+
+        const original = getImageSize(inputBinary);
+        const originalWidth = Math.max(256, Number(original.width) || 1024);
+        const originalHeight = Math.max(256, Number(original.height) || 1024);
+
+        // Stable Diffusion img2img is currently listed by Cloudflare at $0.00/step.
+        // Keep the transformation gentle so the source composition and identity stay close.
+        let strength = 0.22;
+        let steps = 12;
+        let prompt = "enhance this exact image: restore fine details, improve clarity, reduce compression artifacts, improve lighting and texture naturally, preserve the same subject, face, body proportions, composition, colors and objects, photorealistic, do not redesign or add objects";
 
         if (mode === 1) {
-          targetMP = 4;
+          strength = 0.18;
+          steps = 10;
         } else if (mode === 2) {
-          targetMP = 8;
+          strength = 0.25;
+          steps = 14;
         } else if (mode === 3) {
-          targetMP = Math.min(128, Math.max(4, sourceMP * 4));
+          strength = 0.30;
+          steps = 16;
+          prompt += ", maximum detail recovery and cleaner high-resolution appearance";
         } else if (mode === 4) {
-          targetMP = 8;
+          strength = 0.24;
+          steps = 14;
+          prompt += ", crisp professional 4K-style detail";
         } else if (mode === 5) {
-          targetMP = 4;
+          strength = 0.16;
+          steps = 10;
+          prompt += ", preserve natural skin and facial details without changing identity";
         } else if (mode === 6) {
-          targetMP = 4;
+          strength = 0.20;
+          steps = 12;
+          prompt += ", cleaner product edges and fine material texture";
         } else if (mode === 7) {
-          targetMP = Math.min(128, Math.max(4, sourceMP * 2));
+          strength = 0.27;
+          steps = 15;
+          prompt += ", stronger detail recovery while keeping the original image recognizable";
+        }
+
+        // The model supports up to 2048px on each side. Preserve aspect ratio.
+        const scale = Math.min(1, 2048 / originalWidth, 2048 / originalHeight);
+        const width = Math.max(256, Math.round((originalWidth * scale) / 8) * 8);
+        const height = Math.max(256, Math.round((originalHeight * scale) / 8) * 8);
+
+        const result = await env.AI.run(
+          "@cf/runwayml/stable-diffusion-v1-5-img2img",
+          {
+            prompt,
+            negative_prompt: "new objects, changed face, changed identity, distorted body, extra fingers, extra limbs, text, watermark, logo changes, cartoon, painting, oversaturated, blurry, low quality",
+            image_b64: imageBase64,
+            width,
+            height,
+            num_steps: steps,
+            strength,
+            guidance: 7.5
+          }
+        );
+
+        // Workers AI may return the image as a ReadableStream for this model.
+        let outputBytes;
+        if (result instanceof ReadableStream) {
+          const reader = result.getReader();
+          const chunks = [];
+          let total = 0;
+          while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            if (value) {
+              chunks.push(value);
+              total += value.length;
+            }
+          }
+          outputBytes = new Uint8Array(total);
+          let offset = 0;
+          for (const chunk of chunks) {
+            outputBytes.set(chunk, offset);
+            offset += chunk.length;
+          }
+        } else if (result?.image instanceof ReadableStream) {
+          const reader = result.image.getReader();
+          const chunks = [];
+          let total = 0;
+          while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            if (value) {
+              chunks.push(value);
+              total += value.length;
+            }
+          }
+          outputBytes = new Uint8Array(total);
+          let offset = 0;
+          for (const chunk of chunks) {
+            outputBytes.set(chunk, offset);
+            offset += chunk.length;
+          }
+        } else if (result?.image) {
+          const raw = result.image;
+          if (typeof raw === "string") {
+            const clean = raw.replace(/^data:image\/[^;]+;base64,/, "");
+            const outBinary = atob(clean);
+            outputBytes = new Uint8Array(outBinary.length);
+            for (let i = 0; i < outBinary.length; i++) outputBytes[i] = outBinary.charCodeAt(i);
+          } else {
+            outputBytes = new Uint8Array(raw);
+          }
         } else {
-          targetMP = Math.min(128, Math.max(4, sourceMP * 4));
+          throw new Error("The AI enhancer returned no image.");
         }
 
-        const result = await env.AI.run("pruna/p-image-upscale", {
-          image: dataUrl,
-          target: targetMP,
-          enhance_details: enhanceDetails,
-          enhance_realism: enhanceRealism,
-          output_format: "webp",
-          output_quality: 92
-        });
-
-        const outputUrl = String(result?.result?.image || "");
-        if (!outputUrl) throw new Error("The AI enhancer returned no image.");
-
-        // Convert the temporary AI output URL to a data URI so the
-        // existing frontend download flow keeps working without redesign.
-        const outputResponse = await fetch(outputUrl);
-        if (!outputResponse.ok) {
-          throw new Error("Could not retrieve the enhanced image.");
-        }
-
-        const outputBuffer = await outputResponse.arrayBuffer();
-        const outputBytes = new Uint8Array(outputBuffer);
         let resultBinary = "";
         const chunkSize = 0x8000;
         for (let i = 0; i < outputBytes.length; i += chunkSize) {
@@ -113,11 +213,12 @@ export default {
             ...outputBytes.subarray(i, Math.min(i + chunkSize, outputBytes.length))
           );
         }
-        const resultBase64 = btoa(resultBinary);
 
+        const resultBase64 = btoa(resultBinary);
         return new Response(JSON.stringify({
-          image: `data:image/webp;base64,${resultBase64}`,
-          targetMP,
+          image: "data:image/png;base64," + resultBase64,
+          width,
+          height,
           mode
         }), {
           headers:{...cors,"Content-Type":"application/json"}
