@@ -1,10 +1,12 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "graphicfictionai",
   "main": "src/index.js",
   "compatibility_date": "2026-10-03",
   "assets": {
-    "directory": "."
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
   },
   "ai": {
     "binding": "AI"
