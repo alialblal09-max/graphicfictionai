@@ -1,7 +1,4 @@
-{
-  "$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
-  "name": "graphic-fictionai",
-  "main": "src/index.js",default {
+default {
   async fetch(request, env) {
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
@@ -48,10 +45,3 @@
     }
   },
 };
-  "compatibility_date": "2026-10-03",
-  "ai": { "binding": "AI" },
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS"
-  }
-}
