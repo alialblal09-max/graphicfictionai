@@ -9,4 +9,7 @@
   "ai": {
     "binding": "AI"
   }
+  "images": {
+    "binding": "IMAGES"
+  }
 }
