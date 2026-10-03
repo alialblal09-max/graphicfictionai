@@ -1018,6 +1018,23 @@ function lsGet(key, fallback){
 function lsSet(key, value){
   try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){}
 }
+
+function getAnalyticsClientId(){
+  let id = "";
+  try{ id = localStorage.getItem("gfa_analytics_client_id") || ""; }catch(e){}
+  if(!id){
+    id = (crypto?.randomUUID ? crypto.randomUUID() : "gfa-"+Date.now()+"-"+Math.random().toString(36).slice(2));
+    try{ localStorage.setItem("gfa_analytics_client_id", id); }catch(e){}
+  }
+  return id;
+}
+
+function analyticsHeaders(){
+  return {
+    "Content-Type":"application/json",
+    "X-GFA-Client-ID":getAnalyticsClientId()
+  };
+}
 function logToolUsage(tool, mode, status){
   const usage = lsGet('gfa_usage', []);
   usage.push({tool, mode, status, at:new Date().toISOString()});
@@ -1128,7 +1145,7 @@ async function runEnhance(){
   try{
     const response = await fetch("/api/image-enhance", {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:analyticsHeaders(),
       body:JSON.stringify({image:enhancerImageData, mode:enhancerMode})
     });
     const data = await response.json().catch(()=>({}));
@@ -1194,7 +1211,7 @@ async function runStudioGenerate(){
   try{
     const response = await fetch('/api/text-to-image', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: analyticsHeaders(),
       body: JSON.stringify({
         prompt,
         referenceImage: studioReferenceImageData || ""
@@ -1266,7 +1283,7 @@ async function runAssistant(){
   try{
     const response = await fetch('/api/design-assistant', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:analyticsHeaders(),
       body:JSON.stringify({
         type:typeEl?.value || 'Brand',
         idea,
