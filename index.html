@@ -1012,16 +1012,66 @@ function handleEnhUpload(input){
     showToast("Please choose an image file.");
     return;
   }
+
+  // SDXL img2img expects raster image bytes. Rasterize SVG uploads in the browser
+  // so vector artwork reaches the Worker as PNG without changing the UI.
+  if(file.type === "image/svg+xml" || /\.svg$/i.test(file.name)){
+    const reader = new FileReader();
+    reader.onload = () => {
+      const svgText = String(reader.result || "");
+      const svgBlob = new Blob([svgText], {type:"image/svg+xml"});
+      const objectUrl = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = () => {
+        try{
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(svgText, "image/svg+xml");
+          const svg = doc.documentElement;
+          const viewBox = (svg.getAttribute("viewBox") || "").trim().split(/[ ,]+/).map(Number);
+          let width = Number(svg.getAttribute("width")) || (viewBox.length === 4 ? viewBox[2] : 1024);
+          let height = Number(svg.getAttribute("height")) || (viewBox.length === 4 ? viewBox[3] : 1024);
+          width = Math.max(256, Math.min(2048, Math.round(width) || 1024));
+          height = Math.max(256, Math.min(2048, Math.round(height) || 1024));
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if(!ctx) throw new Error("Could not prepare SVG image.");
+          ctx.drawImage(img, 0, 0, width, height);
+          enhancerImageData = canvas.toDataURL("image/png");
+          finishEnhancerUpload();
+        }catch(err){
+          console.error("SVG rasterization error:", err);
+          showToast("Could not prepare the SVG image.");
+        }finally{
+          URL.revokeObjectURL(objectUrl);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        showToast("Could not read the SVG image.");
+      };
+      img.src = objectUrl;
+    };
+    reader.readAsText(file);
+    return;
+  }
+
   const reader = new FileReader();
   reader.onload = () => {
     enhancerImageData = String(reader.result || "");
-    document.getElementById("enh-modes")?.classList.remove("hidden");
-    const resultEl = document.getElementById("enh-result");
-    if(resultEl){
-      resultEl.innerHTML = '<div class="card" style="padding:14px;"><img src="'+enhancerImageData+'" alt="Original image" style="width:100%;border-radius:10px;display:block;"><p style="margin-top:8px;color:var(--text-dim);font-size:12px;">Image ready for enhancement.</p></div>';
-    }
+    finishEnhancerUpload();
   };
   reader.readAsDataURL(file);
+}
+
+function finishEnhancerUpload(){
+  document.getElementById("enh-modes")?.classList.remove("hidden");
+  const resultEl = document.getElementById("enh-result");
+  if(resultEl){
+    resultEl.innerHTML = '<div class="card" style="padding:14px;"><img src="'+enhancerImageData+'" alt="Original image" style="width:100%;border-radius:10px;display:block;"><p style="margin-top:8px;color:var(--text-dim);font-size:12px;">Image ready for enhancement.</p></div>';
+  }
 }
 
 function selectMode(button, mode){
