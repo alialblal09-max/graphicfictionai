@@ -41,7 +41,8 @@ export default {
 
     if (url.pathname === "/api/image-enhance" && request.method === "POST") {
       try {
-        if (!env.IMAGES) throw new Error("Image enhancement is not configured yet.");
+        if (!env.AI) throw new Error("AI enhancement is not configured yet.");
+
         const body = await request.json();
         const dataUrl = String(body.image || "");
         const mode = Math.max(0, Math.min(7, Number(body.mode ?? 0)));
@@ -55,113 +56,68 @@ export default {
         const match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
         if (!match) throw new Error("Invalid image data.");
         const inputBinary = atob(match[1]);
-        if (inputBinary.length > 20 * 1024 * 1024) throw new Error("Image is too large. Maximum input is 20 MB.");
-
-        const bytes = new Uint8Array(inputBinary.length);
-        for (let i = 0; i < inputBinary.length; i++) bytes[i] = inputBinary.charCodeAt(i);
-
-        const info = await env.IMAGES.info(bytes);
-        const width = Number(info?.width || 0);
-        const height = Number(info?.height || 0);
-        if (!width || !height) throw new Error("Could not read image dimensions.");
-
-        // Real AI enhancement: Cloudflare Images uses ESRGAN for
-        // upscale=generate. Add mode-specific restoration controls so the
-        // result is not just a larger copy of the original.
-        let targetWidth;
-        let targetHeight;
-        let sharpen = 2;
-        let brightness = 1;
-        let contrast = 1;
-        let saturation = 1;
-        let gamma = 1;
-
-        if (mode === 4) {
-          // 4K mode: fit within 3840x2160 without creating oversized outputs.
-          const max4KWidth = 3840;
-          const max4KHeight = 2160;
-          const scale4K = Math.min(max4KWidth / width, max4KHeight / height);
-          const safeScale = Math.max(1, scale4K);
-          targetWidth = Math.round(width * safeScale);
-          targetHeight = Math.round(height * safeScale);
-          sharpen = 2.5;
-        } else {
-          // Other enhancement modes target a real 2x AI upscale, capped safely.
-          const scale = 2;
-          const maxPixels = 25_000_000;
-          targetWidth = Math.round(width * scale);
-          targetHeight = Math.round(height * scale);
-          const pixels = targetWidth * targetHeight;
-
-          if (pixels > maxPixels) {
-            const factor = Math.sqrt(maxPixels / pixels);
-            targetWidth = Math.max(width, Math.floor(targetWidth * factor));
-            targetHeight = Math.max(height, Math.floor(targetHeight * factor));
-          }
-
-          if (mode === 1) {
-            // Portrait: controlled sharpening and gentle contrast.
-            sharpen = 2.2;
-            contrast = 1.03;
-          } else if (mode === 2) {
-            // Professional camera: stronger detail and tonal separation.
-            sharpen = 3;
-            contrast = 1.05;
-            saturation = 1.03;
-          } else if (mode === 3) {
-            // Premium 2x: balanced AI upscale with extra detail.
-            sharpen = 2.5;
-            contrast = 1.02;
-          } else if (mode === 5) {
-            // Low-light: lift midtones without aggressively clipping highlights.
-            sharpen = 2;
-            brightness = 1.08;
-            gamma = 0.92;
-            contrast = 1.03;
-          } else if (mode === 6) {
-            // Dynamic range / color: improve separation and color presence.
-            sharpen = 2;
-            contrast = 1.10;
-            saturation = 1.06;
-          } else if (mode === 7) {
-            // Sharpen: prioritize edge definition.
-            sharpen = 4;
-          }
+        if (inputBinary.length > 20 * 1024 * 1024) {
+          throw new Error("Image is too large. Maximum input is 20 MB.");
         }
 
-        const response = (
-          await env.IMAGES.input(bytes)
-            .transform({
-              width: targetWidth,
-              height: targetHeight,
-              fit: "contain",
-              upscale: "generate",
-              sharpen,
-              brightness,
-              contrast,
-              saturation,
-              gamma
-            })
-            .output({format:"image/webp"})
-        ).response({
-          headers: {
-            "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"
-          }
+        // Pruna P-Image-Upscale is a dedicated image-to-image AI upscaler.
+        // It enhances fine details while preserving the original composition.
+        const sourceMP = Math.max(1, Math.round((inputBinary.length / 3) / 1_000_000));
+        let targetMP = 4;
+        let enhanceDetails = true;
+        let enhanceRealism = false;
+
+        if (mode === 1) {
+          targetMP = 4;
+        } else if (mode === 2) {
+          targetMP = 8;
+        } else if (mode === 3) {
+          targetMP = Math.min(128, Math.max(4, sourceMP * 4));
+        } else if (mode === 4) {
+          targetMP = 8;
+        } else if (mode === 5) {
+          targetMP = 4;
+        } else if (mode === 6) {
+          targetMP = 4;
+        } else if (mode === 7) {
+          targetMP = Math.min(128, Math.max(4, sourceMP * 2));
+        } else {
+          targetMP = Math.min(128, Math.max(4, sourceMP * 4));
+        }
+
+        const result = await env.AI.run("pruna/p-image-upscale", {
+          image: dataUrl,
+          target: targetMP,
+          enhance_details: enhanceDetails,
+          enhance_realism: enhanceRealism,
+          output_format: "webp",
+          output_quality: 92
         });
 
-        const resultBuffer = await response.arrayBuffer();
-        const resultBytes = new Uint8Array(resultBuffer);
+        const outputUrl = String(result?.result?.image || "");
+        if (!outputUrl) throw new Error("The AI enhancer returned no image.");
+
+        // Convert the temporary AI output URL to a data URI so the
+        // existing frontend download flow keeps working without redesign.
+        const outputResponse = await fetch(outputUrl);
+        if (!outputResponse.ok) {
+          throw new Error("Could not retrieve the enhanced image.");
+        }
+
+        const outputBuffer = await outputResponse.arrayBuffer();
+        const outputBytes = new Uint8Array(outputBuffer);
         let resultBinary = "";
         const chunkSize = 0x8000;
-        for (let i = 0; i < resultBytes.length; i += chunkSize) {
-          resultBinary += String.fromCharCode(...resultBytes.subarray(i, Math.min(i + chunkSize, resultBytes.length)));
+        for (let i = 0; i < outputBytes.length; i += chunkSize) {
+          resultBinary += String.fromCharCode(
+            ...outputBytes.subarray(i, Math.min(i + chunkSize, outputBytes.length))
+          );
         }
         const resultBase64 = btoa(resultBinary);
 
         return new Response(JSON.stringify({
           image: `data:image/webp;base64,${resultBase64}`,
-          width: targetWidth,
-          height: targetHeight,
+          targetMP,
           mode
         }), {
           headers:{...cors,"Content-Type":"application/json"}
