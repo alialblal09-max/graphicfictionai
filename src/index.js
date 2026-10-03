@@ -65,16 +65,30 @@ export default {
         const height = Number(info?.height || 0);
         if (!width || !height) throw new Error("Could not read image dimensions.");
 
-        const scale = mode === 4 ? 4 : 2;
-        const maxPixels = 100_000_000;
-        let targetWidth = Math.max(width, Math.round(width * scale));
-        let targetHeight = Math.max(height, Math.round(height * scale));
-        const pixels = targetWidth * targetHeight;
+        // Mode 4 is presented as 4K. Do not blindly multiply large images by 4,
+        // because that can exceed the image service's processing limits.
+        let targetWidth;
+        let targetHeight;
 
-        if (pixels > maxPixels) {
-          const factor = Math.sqrt(maxPixels / pixels);
-          targetWidth = Math.max(width, Math.floor(targetWidth * factor));
-          targetHeight = Math.max(height, Math.floor(targetHeight * factor));
+        if (mode === 4) {
+          const max4KWidth = 3840;
+          const max4KHeight = 2160;
+          const scale4K = Math.min(max4KWidth / width, max4KHeight / height);
+          const safeScale = Math.max(1, scale4K);
+          targetWidth = Math.round(width * safeScale);
+          targetHeight = Math.round(height * safeScale);
+        } else {
+          const scale = 2;
+          const maxPixels = 25_000_000;
+          targetWidth = Math.round(width * scale);
+          targetHeight = Math.round(height * scale);
+          const pixels = targetWidth * targetHeight;
+
+          if (pixels > maxPixels) {
+            const factor = Math.sqrt(maxPixels / pixels);
+            targetWidth = Math.max(width, Math.floor(targetWidth * factor));
+            targetHeight = Math.max(height, Math.floor(targetHeight * factor));
+          }
         }
 
         const response = (
