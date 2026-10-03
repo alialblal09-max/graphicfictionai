@@ -978,12 +978,34 @@ function openModal(title, body, onConfirm){
 function closeModal(){ document.getElementById('modal-overlay').classList.add('hidden'); }
 
 /* ---------- upload helper ---------- */
+let studioReferenceImageData = "";
+
 function handleUpload(input, previewId){
   const file=input.files[0]; if(!file) return;
   const reader=new FileReader();
   reader.onload=e=>{
+    const dataUrl = String(e.target.result || "");
     const img=document.getElementById(previewId);
-    img.src=e.target.result; img.classList.remove('hidden');
+    img.src=dataUrl; img.classList.remove('hidden');
+
+    if(previewId === "studio-ref-preview"){
+      const source = new Image();
+      source.onload = () => {
+        const maxSize = 512;
+        const scale = Math.min(1, maxSize / source.naturalWidth, maxSize / source.naturalHeight);
+        const width = Math.max(1, Math.round(source.naturalWidth * scale));
+        const height = Math.max(1, Math.round(source.naturalHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if(ctx){
+          ctx.drawImage(source, 0, 0, width, height);
+          studioReferenceImageData = canvas.toDataURL("image/jpeg", 0.9);
+        }
+      };
+      source.src = dataUrl;
+    }
   };
   reader.readAsDataURL(file);
 }
@@ -1172,7 +1194,10 @@ async function runStudioGenerate(){
     const response = await fetch('/api/text-to-image', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({prompt})
+      body: JSON.stringify({
+        prompt,
+        referenceImage: studioReferenceImageData || ""
+      })
     });
 
     const data = await response.json().catch(()=>({}));
