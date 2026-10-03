@@ -145,7 +145,7 @@ export default {
           {
             prompt,
             negative_prompt: "new objects, changed face, changed identity, distorted body, extra fingers, extra limbs, text, watermark, logo changes, cartoon, painting, oversaturated, blurry, low quality",
-            image: Array.from(new Uint8Array(inputBinary.length), (_, i) => inputBinary.charCodeAt(i)),
+            image_b64: imageBase64,
             width,
             height,
             num_steps: steps,
