@@ -17,10 +17,48 @@ export default {
           status:400, headers:{...cors,"Content-Type":"application/json"}
         });
 
-        const result = await env.AI.run(
-          "@cf/black-forest-labs/flux-1-schnell",
-          {prompt, steps:4}
-        );
+        const referenceImage = String(body.referenceImage || "");
+        let result;
+
+        if (referenceImage.startsWith("data:image/")) {
+          const match = referenceImage.match(/^data:image\/[^;]+;base64,(.+)$/);
+          if (!match) throw new Error("Invalid reference image.");
+
+          const referenceBinary = atob(match[1]);
+          if (referenceBinary.length > 6 * 1024 * 1024) {
+            throw new Error("Reference image is too large.");
+          }
+
+          const referenceBytes = new Uint8Array(referenceBinary.length);
+          for (let i = 0; i < referenceBinary.length; i++) {
+            referenceBytes[i] = referenceBinary.charCodeAt(i);
+          }
+
+          const form = new FormData();
+          form.append(
+            "prompt",
+            "Use image 0 as the primary identity and subject reference. Preserve the same person, facial identity, facial structure, hairstyle, skin tone, body proportions and recognizable appearance. Change only the scene, clothing, pose and environment requested by the user. Do not replace the person with a different face. " + prompt
+          );
+          form.append("input_image_0", new Blob([referenceBytes], {type:"image/jpeg"}), "reference.jpg");
+          form.append("width", "1024");
+          form.append("height", "1024");
+
+          const formResponse = new Response(form);
+          result = await env.AI.run(
+            "@cf/black-forest-labs/flux-2-klein-4b",
+            {
+              multipart: {
+                body: formResponse.body,
+                contentType: formResponse.headers.get("content-type")
+              }
+            }
+          );
+        } else {
+          result = await env.AI.run(
+            "@cf/black-forest-labs/flux-1-schnell",
+            {prompt, steps:4}
+          );
+        }
 
         return new Response(JSON.stringify({
           image: `data:image/jpeg;base64,${result.image}`
