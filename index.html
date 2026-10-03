@@ -543,11 +543,6 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
               <p style="font-size:12.5px;">Optional: upload your photo (main reference)</p>
             </div>
             <img id="studio-ref-preview" class="hidden" style="border-radius:8px; margin-bottom:14px; max-height:120px; object-fit:cover;">
-            <div class="upload-zone" style="padding:20px; margin-bottom:14px;" onclick="document.getElementById('studio-face-upload').click()">
-              <input type="file" id="studio-face-upload" accept="image/*" class="hidden" onchange="handleUpload(this,'studio-face-preview')">
-              <p style="font-size:12.5px;">Optional: upload a clear face photo (identity reference)</p>
-            </div>
-            <img id="studio-face-preview" class="hidden" style="border-radius:8px; margin-bottom:14px; max-height:120px; object-fit:cover;">
             <label style="font-size:12.5px; color:var(--text-dim); display:block; margin-bottom:8px;">Aspect ratio</label>
             <div class="chip-row" id="studio-ratios">
               <button class="opt-chip active" onclick="selectChip(this,'studio-ratios')">1:1</button>
@@ -984,7 +979,6 @@ function closeModal(){ document.getElementById('modal-overlay').classList.add('h
 
 /* ---------- upload helper ---------- */
 let studioReferenceImageData = "";
-let studioFaceImageData = "";
 
 function handleUpload(input, previewId){
   const file=input.files[0]; if(!file) return;
@@ -994,7 +988,7 @@ function handleUpload(input, previewId){
     const img=document.getElementById(previewId);
     img.src=dataUrl; img.classList.remove('hidden');
 
-    if(previewId === "studio-ref-preview" || previewId === "studio-face-preview"){
+    if(previewId === "studio-ref-preview"){
       const source = new Image();
       source.onload = () => {
         const maxSize = 512;
@@ -1008,11 +1002,7 @@ function handleUpload(input, previewId){
         if(ctx){
           ctx.drawImage(source, 0, 0, width, height);
           const normalized = canvas.toDataURL("image/jpeg", 0.9);
-          if(previewId === "studio-face-preview"){
-            studioFaceImageData = normalized;
-          }else{
-            studioReferenceImageData = normalized;
-          }
+          studioReferenceImageData = normalized;
         }
       };
       source.src = dataUrl;
@@ -1207,8 +1197,7 @@ async function runStudioGenerate(){
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         prompt,
-        referenceImage: studioReferenceImageData || "",
-        faceImage: studioFaceImageData || ""
+        referenceImage: studioReferenceImageData || ""
       })
     });
 
