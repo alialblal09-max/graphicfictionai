@@ -375,7 +375,14 @@ export default {
           temperature: 0.7
         });
 
-        const text = String(result?.response || "").trim();
+        // Normalize both native Workers AI and OpenAI-compatible response shapes.
+        const text = String(
+          result?.response ??
+          result?.choices?.[0]?.message?.content ??
+          result?.choices?.[0]?.text ??
+          result?.result?.response ??
+          ""
+        ).trim();
         if (!text) throw new Error("The AI returned no response.");
 
         return new Response(JSON.stringify({text}), {
