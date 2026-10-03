@@ -1001,6 +1001,80 @@ function logToolUsage(tool, mode, status){
   lsSet('gfa_usage', usage);
 }
 
+/* ---------- real Cloudflare Images enhancer ---------- */
+let enhancerImageData = "";
+let enhancerMode = 0;
+
+function handleEnhUpload(input){
+  const file = input?.files?.[0];
+  if(!file) return;
+  if(!file.type.startsWith("image/")){
+    showToast("Please choose an image file.");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    enhancerImageData = String(reader.result || "");
+    document.getElementById("enh-modes")?.classList.remove("hidden");
+    const resultEl = document.getElementById("enh-result");
+    if(resultEl){
+      resultEl.innerHTML = '<div class="card" style="padding:14px;"><img src="'+enhancerImageData+'" alt="Original image" style="width:100%;border-radius:10px;display:block;"><p style="margin-top:8px;color:var(--text-dim);font-size:12px;">Image ready for enhancement.</p></div>';
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function selectMode(button, mode){
+  document.querySelectorAll("#enh-mode-grid .mode-card").forEach(b => b.classList.remove("active"));
+  button?.classList.add("active");
+  enhancerMode = Number(mode) || 0;
+  const costEl = document.getElementById("enh-cost");
+  if(costEl) costEl.textContent = enhancerMode === 4 ? "5" : "3";
+}
+
+async function runEnhance(){
+  const resultEl = document.getElementById("enh-result");
+  if(!enhancerImageData){
+    showToast("Upload an image first.");
+    return;
+  }
+  if(document.getElementById("enh-force-fail")?.checked){
+    resultEl.innerHTML = '<div class="card" style="border-color:var(--red);"><strong style="color:var(--red);">Enhancement failed</strong><p style="margin-top:8px;color:var(--text-dim);font-size:13px;">Demo failure simulation is enabled.</p></div>';
+    logToolUsage("image-enhancer", "simulated-failure", "failed");
+    return;
+  }
+
+  const button = document.querySelector('#dash-enhancer button[onclick="runEnhance()"]');
+  if(button){
+    button.disabled = true;
+    button.dataset.originalText = button.innerHTML;
+    button.textContent = "Enhancing…";
+  }
+  resultEl.innerHTML = '<div class="spellbook-loading"><div class="spinner" style="width:18px;height:18px;margin:0;"></div><span>Enhancing with Cloudflare Images AI…</span></div>';
+
+  try{
+    const response = await fetch("/api/image-enhance", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({image:enhancerImageData, mode:enhancerMode})
+    });
+    const data = await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(data.details || data.error || "Enhancement failed");
+    if(!data.image) throw new Error("The enhancer returned no image.");
+
+    resultEl.innerHTML = '<div class="card" style="padding:14px;"><img src="'+data.image+'" alt="Enhanced image" style="width:100%;border-radius:10px;display:block;"><div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"><a class="btn btn-gold btn-sm" href="'+data.image+'" download="graphic-fiction-ai-enhanced.webp">Download Enhanced Image</a></div><p style="margin-top:8px;color:var(--text-dim);font-size:12px;">AI upscaled result: '+data.width+' × '+data.height+' px</p></div>';
+    logToolUsage("image-enhancer", enhancerMode === 4 ? "upscale-4x" : "ai-upscale", "success");
+    showToast("Image enhanced successfully.");
+  }catch(err){
+    console.error("Graphic Fiction AI enhancer error:", err);
+    resultEl.innerHTML = '<div class="card" style="border-color:var(--red);"><strong style="color:var(--red);">Enhancement failed</strong><p style="margin-top:8px;color:var(--text-dim);font-size:13px;line-height:1.5;">'+String(err.message || err).replace(/[<>&"]/g,s=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[s]))+'</p></div>';
+    logToolUsage("image-enhancer", "ai-upscale", "failed");
+  }finally{
+    if(button) button.disabled = false;
+    if(button) button.innerHTML = button.dataset.originalText || 'Enhance — <span id="enh-cost">'+(enhancerMode===4?"5":"3")+'</span> credits';
+  }
+}
+
 /* ---------- real Cloudflare Workers AI image generation ---------- */
 function getDailyImageUsage(){
   const today = new Date().toISOString().slice(0,10);
