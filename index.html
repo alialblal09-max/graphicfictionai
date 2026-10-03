@@ -488,6 +488,7 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
       <button class="dash-nav-item" data-dash="enhancer" onclick="switchDash('enhancer')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 2L3 14h7l-1 8 11-14h-7z"/></svg><span class="label">Image Enhancer</span></button>
       <button class="dash-nav-item" data-dash="bgremove" onclick="switchDash('bgremove')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4h16v16H4z"/><path d="M4 15l5-5 4 4 3-3 4 4"/></svg><span class="label">Background Remover</span></button>
       <button class="dash-nav-item" data-dash="assistant" onclick="switchDash('assistant')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg><span class="label">Design Assistant</span></button>
+      <button class="dash-nav-item" data-dash="chat" onclick="switchDash('chat')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5.5A2.5 2.5 0 016.5 3h11A2.5 2.5 0 0120 5.5v8a2.5 2.5 0 01-2.5 2.5H12l-4.5 4v-4h-1A2.5 2.5 0 014 13.5z"/><path d="M8 8h8M8 11.5h5"/></svg><span class="label">AI Chat</span></button>
       <button class="dash-nav-item" data-dash="projects" onclick="switchDash('projects')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7l2-3h5l2 3h9v11a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg><span class="label">Projects</span></button>
       <button class="dash-nav-item" data-dash="credits" onclick="switchDash('credits')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span class="label">Credits</span></button>
       <button class="dash-nav-item" data-dash="settings" onclick="switchDash('settings')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9M4.6 9a1.7 1.7 0 00-.3-1.9"/></svg><span class="label">Settings</span></button>
@@ -635,6 +636,24 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
           </div>
           <button class="btn btn-gold" onclick="runAssistant()">Generate Concept — 3 credits</button>
           <div id="assist-result"></div>
+        </div>
+      </div>
+
+      <!-- AI CHAT -->
+      <div id="dash-chat" class="hidden">
+        <div class="page-head"><h1>AI Chat</h1><p>Talk to Graphic Fiction AI in Egyptian Arabic or any language.</p></div>
+        <div class="card" style="max-width:820px;">
+          <div id="chat-messages" style="min-height:360px; max-height:520px; overflow:auto; display:flex; flex-direction:column; gap:10px; padding:4px 2px 14px;">
+            <div style="align-self:flex-start; max-width:88%; padding:11px 13px; border:1px solid var(--border); border-radius:12px 12px 12px 4px; background:var(--surface-2); color:var(--text); line-height:1.6; font-size:13.5px;">أهلاً بيك 👋 أنا Graphic Fiction AI. كلّمني بالمصري أو بأي لغة تحب — أقدر أساعدك في التصميم، البرومبتات، البراندنج، والأفكار.</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:flex-end;">
+            <textarea id="chat-input" rows="2" placeholder="اكتب رسالتك هنا… / Type your message…" style="flex:1; resize:vertical;" onkeydown="handleChatKeydown(event)"></textarea>
+            <button class="btn btn-gold" id="chat-send-btn" onclick="sendChat()">Send</button>
+          </div>
+          <div style="display:flex; justify-content:space-between; gap:8px; margin-top:8px;">
+            <span style="font-size:11.5px; color:var(--text-faint);">مصري افتراضيًا • يدعم لغات متعددة</span>
+            <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear chat</button>
+          </div>
         </div>
       </div>
 
@@ -1256,6 +1275,92 @@ async function runStudioGenerate(){
   }
 }
 
+
+/* ---------- multilingual AI chat ---------- */
+let chatMessages = [];
+
+function escapeChatText(value){
+  return String(value || "").replace(/[<>&"]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[s]));
+}
+
+function renderChat(){
+  const box = document.getElementById('chat-messages');
+  if(!box) return;
+  if(!chatMessages.length){
+    box.innerHTML = '<div style="align-self:flex-start; max-width:88%; padding:11px 13px; border:1px solid var(--border); border-radius:12px 12px 12px 4px; background:var(--surface-2); color:var(--text); line-height:1.6; font-size:13.5px;">أهلاً بيك 👋 أنا Graphic Fiction AI. كلّمني بالمصري أو بأي لغة تحب.</div>';
+    return;
+  }
+  box.innerHTML = chatMessages.map(m => {
+    const isUser = m.role === 'user';
+    return '<div style="align-self:'+(isUser?'flex-end':'flex-start')+'; max-width:88%; padding:11px 13px; border:1px solid var(--border); border-radius:'+(isUser?'12px 12px 4px 12px':'12px 12px 12px 4px')+'; background:'+(isUser?'var(--surface-3)':'var(--surface-2)')+'; color:var(--text); line-height:1.6; font-size:13.5px; white-space:pre-wrap;">'+escapeChatText(m.content)+'</div>';
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function handleChatKeydown(event){
+  if(event.key === 'Enter' && !event.shiftKey){
+    event.preventDefault();
+    sendChat();
+  }
+}
+
+function clearChat(){
+  chatMessages = [];
+  try{ localStorage.removeItem('gfa_chat_history'); }catch(e){}
+  renderChat();
+}
+
+async function sendChat(){
+  const input = document.getElementById('chat-input');
+  const button = document.getElementById('chat-send-btn');
+  const text = (input?.value || '').trim();
+  if(!text) return;
+
+  chatMessages.push({role:'user', content:text});
+  input.value = '';
+  renderChat();
+
+  if(button){
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = '…';
+  }
+
+  try{
+    const response = await fetch('/api/chat', {
+      method:'POST',
+      headers:analyticsHeaders(),
+      body:JSON.stringify({messages:chatMessages.slice(-20)})
+    });
+    const data = await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(data.details || data.error || 'Chat failed');
+    if(!data.text) throw new Error('The AI returned no response.');
+
+    chatMessages.push({role:'assistant', content:String(data.text)});
+    try{ localStorage.setItem('gfa_chat_history', JSON.stringify(chatMessages.slice(-20))); }catch(e){}
+    renderChat();
+    logToolUsage('ai-chat', 'multilingual', 'success');
+  }catch(err){
+    console.error('AI Chat error:', err);
+    chatMessages.push({role:'assistant', content:'حصلت مشكلة في الرد دلوقتي. جرّب تاني بعد لحظة.'});
+    renderChat();
+    logToolUsage('ai-chat', 'multilingual', 'failed');
+  }finally{
+    if(button){
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || 'Send';
+    }
+    input?.focus();
+  }
+}
+
+function loadChatHistory(){
+  try{
+    const saved = JSON.parse(localStorage.getItem('gfa_chat_history') || '[]');
+    if(Array.isArray(saved)) chatMessages = saved.filter(m => m && (m.role==='user' || m.role==='assistant') && typeof m.content==='string').slice(-20);
+  }catch(e){}
+  renderChat();
+}
 
 /* ---------- real Cloudflare Workers AI design assistant ---------- */
 async function runAssistant(){
