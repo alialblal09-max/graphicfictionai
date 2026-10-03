@@ -54,11 +54,11 @@ export default {
 
         const match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
         if (!match) throw new Error("Invalid image data.");
-        const binary = atob(match[1]);
-        if (binary.length > 20 * 1024 * 1024) throw new Error("Image is too large. Maximum input is 20 MB.");
+        const inputBinary = atob(match[1]);
+        if (inputBinary.length > 20 * 1024 * 1024) throw new Error("Image is too large. Maximum input is 20 MB.");
 
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const bytes = new Uint8Array(inputBinary.length);
+        for (let i = 0; i < inputBinary.length; i++) bytes[i] = inputBinary.charCodeAt(i);
 
         const info = await env.IMAGES.info(bytes);
         const width = Number(info?.width || 0);
@@ -94,12 +94,12 @@ export default {
 
         const resultBuffer = await response.arrayBuffer();
         const resultBytes = new Uint8Array(resultBuffer);
-        let binary = "";
+        let resultBinary = "";
         const chunkSize = 0x8000;
         for (let i = 0; i < resultBytes.length; i += chunkSize) {
-          binary += String.fromCharCode(...resultBytes.subarray(i, Math.min(i + chunkSize, resultBytes.length)));
+          resultBinary += String.fromCharCode(...resultBytes.subarray(i, Math.min(i + chunkSize, resultBytes.length)));
         }
-        const resultBase64 = btoa(binary);
+        const resultBase64 = btoa(resultBinary);
 
         return new Response(JSON.stringify({
           image: `data:image/webp;base64,${resultBase64}`,
