@@ -1004,6 +1004,10 @@ function handleUpload(input, previewId){
   const reader=new FileReader();
   reader.onload=e=>{
     const dataUrl = String(e.target.result || "");
+    if(previewId === "studio-ref-preview"){
+      // Keep the reference immediately so Generate can never race the resize step.
+      studioReferenceImageData = dataUrl;
+    }
     const img=document.getElementById(previewId);
     img.src=dataUrl; img.classList.remove('hidden');
 
