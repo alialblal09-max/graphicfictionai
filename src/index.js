@@ -4,7 +4,7 @@ export default {
     const cors = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
+      "Access-Control-Allow-Headers": "Content-Type, X-GFA-Client-ID"
     };
 
     if (request.method === "OPTIONS") return new Response(null, {headers: cors});
