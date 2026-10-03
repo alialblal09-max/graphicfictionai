@@ -28,7 +28,7 @@ export default {
       recordUsage("text-to-image");
       try {
         const body = await request.json();
-        const prompt = String(body.prompt || "").trim().slice(0, 500);
+        const prompt = String(body.prompt || "").trim().slice(0, 2048);
         if (!prompt) return new Response(JSON.stringify({error:"Missing prompt"}), {
           status:400, headers:{...cors,"Content-Type":"application/json"}
         });
@@ -38,53 +38,52 @@ export default {
 
         const hasMainReference = referenceImage.startsWith("data:image/");
 
-        if (hasMainReference) {
-          const refs = [];
+        const widthRaw = Number(body.width);
+        const heightRaw = Number(body.height);
+        const width = Number.isFinite(widthRaw) ? Math.max(256, Math.min(1920, Math.round(widthRaw / 8) * 8)) : 1024;
+        const height = Number.isFinite(heightRaw) ? Math.max(256, Math.min(1920, Math.round(heightRaw / 8) * 8)) : 1024;
 
-          function dataUrlToBlob(dataUrl, label) {
-            const match = dataUrl.match(/^data:image\/([^;]+);base64,(.+)$/);
-            if (!match) throw new Error("Invalid " + label + " image.");
-            const mime = "image/" + match[1];
-            const binary = atob(match[2]);
-            if (binary.length > 6 * 1024 * 1024) {
-              throw new Error(label + " image is too large.");
-            }
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            return new Blob([bytes], {type:mime});
+        if (hasMainReference) {
+          const match = referenceImage.match(/^data:image\/([^;]+);base64,(.+)$/);
+          if (!match) throw new Error("Invalid reference image.");
+          const mime = "image/" + match[1];
+          const binary = atob(match[2]);
+          if (binary.length > 6 * 1024 * 1024) {
+            throw new Error("Reference image is too large.");
           }
 
-          refs.push({
-            key:"input_image_0",
-            blob:dataUrlToBlob(referenceImage, "reference"),
-            name:"reference.jpg"
-          });
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-          const identityInstruction = "Image 0 is the user's photo. Use this single image as the primary reference for the SAME PERSON. Preserve recognizable facial identity, facial structure, eyes, nose, mouth, jawline, skin tone, hairline, hairstyle and body proportions. Do not invent or replace the person with a different face. Change only the scene, pose, clothing or environment requested by the user's prompt.";
-
+          const identityInstruction = "Image 0 is the user's photo. Use it as the primary reference for the SAME PERSON. Preserve recognizable facial identity, facial structure, eyes, nose, mouth, jawline, skin tone, hairline, hairstyle and body proportions. Do not replace the person with a different face. Change only the scene, pose, clothing or environment requested by the user.";
           const form = new FormData();
           form.append("prompt", identityInstruction + " " + prompt);
-          for (const ref of refs) {
-            form.append(ref.key, ref.blob, ref.name);
-          }
-          form.append("width", "1024");
-          form.append("height", "1024");
+          form.append("input_image_0", new Blob([bytes], {type:mime}), "reference.jpg");
+          form.append("width", String(width));
+          form.append("height", String(height));
+          form.append("guidance", "4");
 
           const formResponse = new Response(form);
-          result = await env.AI.run(
-            "@cf/black-forest-labs/flux-2-klein-4b",
-            {
-              multipart: {
-                body: formResponse.body,
-                contentType: formResponse.headers.get("content-type")
-              }
+          result = await env.AI.run("@cf/black-forest-labs/flux-2-klein-4b", {
+            multipart: {
+              body: formResponse.body,
+              contentType: formResponse.headers.get("content-type")
             }
-          );
+          });
         } else {
-          result = await env.AI.run(
-            "@cf/black-forest-labs/flux-1-schnell",
-            {prompt, steps:4}
-          );
+          const form = new FormData();
+          form.append("prompt", prompt);
+          form.append("width", String(width));
+          form.append("height", String(height));
+          form.append("guidance", "4");
+
+          const formResponse = new Response(form);
+          result = await env.AI.run("@cf/black-forest-labs/flux-2-klein-4b", {
+            multipart: {
+              body: formResponse.body,
+              contentType: formResponse.headers.get("content-type")
+            }
+          });
         }
 
         return new Response(JSON.stringify({
