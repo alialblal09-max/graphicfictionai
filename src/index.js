@@ -328,7 +328,13 @@ export default {
           temperature: 0.65
         });
 
-        const text = String(result?.response || "").trim();
+        const text = String(
+          result?.response ??
+          result?.choices?.[0]?.message?.content ??
+          result?.choices?.[0]?.text ??
+          result?.result?.response ??
+          ""
+        ).trim();
         if (!text) throw new Error("The AI returned no concept.");
 
         return new Response(JSON.stringify({text}), {
@@ -346,6 +352,60 @@ export default {
       }
     }
 
+
+    if (url.pathname === "/api/remove-background" && request.method === "POST") {
+      recordUsage("background-remover");
+      try {
+        if (!env.IMAGES) throw new Error("Cloudflare Images binding is not configured.");
+        const body = await request.json();
+        const dataUrl = String(body.image || "");
+        if (!dataUrl.startsWith("data:image/")) {
+          return new Response(JSON.stringify({error:"Please upload a valid image."}), {
+            status:400, headers:{...cors,"Content-Type":"application/json"}
+          });
+        }
+
+        const match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (!match) throw new Error("Invalid image data.");
+        const binary = atob(match[1]);
+        if (binary.length > 20 * 1024 * 1024) {
+          throw new Error("Image is too large. Maximum input is 20 MB.");
+        }
+
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+        const input = env.IMAGES.input(new Blob([bytes]));
+        const result = await input
+          .transform({ segment: "foreground" })
+          .output({ format: "image/png" });
+
+        const response = await result.response();
+        const outputBuffer = await response.arrayBuffer();
+        const outputBytes = new Uint8Array(outputBuffer);
+        let outBinary = "";
+        const chunkSize = 0x8000;
+        for (let i = 0; i < outputBytes.length; i += chunkSize) {
+          outBinary += String.fromCharCode(
+            ...outputBytes.subarray(i, Math.min(i + chunkSize, outputBytes.length))
+          );
+        }
+
+        return new Response(JSON.stringify({
+          image: "data:image/png;base64," + btoa(outBinary)
+        }), {
+          headers:{...cors,"Content-Type":"application/json"}
+        });
+      } catch (err) {
+        console.error("Background removal error:", err);
+        return new Response(JSON.stringify({
+          error:"Background removal failed",
+          details:String(err?.message || err)
+        }), {
+          status:500, headers:{...cors,"Content-Type":"application/json"}
+        });
+      }
+    }
 
     if (url.pathname === "/api/chat" && request.method === "POST") {
       recordUsage("chat");
