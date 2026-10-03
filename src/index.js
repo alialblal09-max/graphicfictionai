@@ -65,19 +65,28 @@ export default {
         const height = Number(info?.height || 0);
         if (!width || !height) throw new Error("Could not read image dimensions.");
 
-        // Mode 4 is presented as 4K. Do not blindly multiply large images by 4,
-        // because that can exceed the image service's processing limits.
+        // Real AI enhancement: Cloudflare Images uses ESRGAN for
+        // upscale=generate. Add mode-specific restoration controls so the
+        // result is not just a larger copy of the original.
         let targetWidth;
         let targetHeight;
+        let sharpen = 2;
+        let brightness = 1;
+        let contrast = 1;
+        let saturation = 1;
+        let gamma = 1;
 
         if (mode === 4) {
+          // 4K mode: fit within 3840x2160 without creating oversized outputs.
           const max4KWidth = 3840;
           const max4KHeight = 2160;
           const scale4K = Math.min(max4KWidth / width, max4KHeight / height);
           const safeScale = Math.max(1, scale4K);
           targetWidth = Math.round(width * safeScale);
           targetHeight = Math.round(height * safeScale);
+          sharpen = 2.5;
         } else {
+          // Other enhancement modes target a real 2x AI upscale, capped safely.
           const scale = 2;
           const maxPixels = 25_000_000;
           targetWidth = Math.round(width * scale);
@@ -89,6 +98,35 @@ export default {
             targetWidth = Math.max(width, Math.floor(targetWidth * factor));
             targetHeight = Math.max(height, Math.floor(targetHeight * factor));
           }
+
+          if (mode === 1) {
+            // Portrait: controlled sharpening and gentle contrast.
+            sharpen = 2.2;
+            contrast = 1.03;
+          } else if (mode === 2) {
+            // Professional camera: stronger detail and tonal separation.
+            sharpen = 3;
+            contrast = 1.05;
+            saturation = 1.03;
+          } else if (mode === 3) {
+            // Premium 2x: balanced AI upscale with extra detail.
+            sharpen = 2.5;
+            contrast = 1.02;
+          } else if (mode === 5) {
+            // Low-light: lift midtones without aggressively clipping highlights.
+            sharpen = 2;
+            brightness = 1.08;
+            gamma = 0.92;
+            contrast = 1.03;
+          } else if (mode === 6) {
+            // Dynamic range / color: improve separation and color presence.
+            sharpen = 2;
+            contrast = 1.10;
+            saturation = 1.06;
+          } else if (mode === 7) {
+            // Sharpen: prioritize edge definition.
+            sharpen = 4;
+          }
         }
 
         const response = (
@@ -97,7 +135,12 @@ export default {
               width: targetWidth,
               height: targetHeight,
               fit: "contain",
-              upscale: "generate"
+              upscale: "generate",
+              sharpen,
+              brightness,
+              contrast,
+              saturation,
+              gamma
             })
             .output({format:"image/webp"})
         ).response({
