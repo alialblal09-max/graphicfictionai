@@ -347,6 +347,52 @@ export default {
       }
     }
 
+
+    if (url.pathname === "/api/chat" && request.method === "POST") {
+      recordUsage("chat");
+      try {
+        const body = await request.json();
+        const incoming = Array.isArray(body.messages) ? body.messages : [];
+        const messages = incoming
+          .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+          .slice(-20)
+          .map(m => ({
+            role: m.role,
+            content: String(m.content).trim().slice(0, 6000)
+          }))
+          .filter(m => m.content);
+
+        if (!messages.length) {
+          return new Response(JSON.stringify({error:"Missing messages"}), {
+            status:400, headers:{...cors,"Content-Type":"application/json"}
+          });
+        }
+
+        const system = "You are Graphic Fiction AI, the built-in creative AI assistant for designers. Egyptian Arabic (Masri) is your default conversational dialect and your natural tone should feel friendly, clear, and helpful. If the user writes in another language, answer naturally in that language; if they asks for a specific dialect or language, follow it. You can understand and respond across many languages. Do not mix languages unless useful or requested. You help with graphic design, branding, prompts, image ideas, social media, typography, color, creative direction, marketing copy, and general questions. Give practical answers, examples, and ready-to-use prompts when useful. Never claim to be a human. When the user asks for an image, explain the exact prompt/settings they can use in AI Image Studio rather than pretending the chat itself generated an image. Keep responses concise unless the user asks for detail.";
+
+        const result = await env.AI.run("@cf/zai-org/glm-4.7-flash", {
+          messages: [{role:"system", content:system}, ...messages],
+          max_tokens: 1200,
+          temperature: 0.7
+        });
+
+        const text = String(result?.response || "").trim();
+        if (!text) throw new Error("The AI returned no response.");
+
+        return new Response(JSON.stringify({text}), {
+          headers:{...cors,"Content-Type":"application/json"}
+        });
+      } catch (err) {
+        console.error("Chat error:", err);
+        return new Response(JSON.stringify({
+          error:"Chat failed",
+          details:String(err?.message || err)
+        }), {
+          status:500, headers:{...cors,"Content-Type":"application/json"}
+        });
+      }
+    }
+
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("Graphic Fiction AI", {headers:{"Content-Type":"text/plain"}});
   }
