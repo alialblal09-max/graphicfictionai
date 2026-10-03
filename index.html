@@ -1002,10 +1002,32 @@ function logToolUsage(tool, mode, status){
 }
 
 /* ---------- real Cloudflare Workers AI image generation ---------- */
+function getDailyImageUsage(){
+  const today = new Date().toISOString().slice(0,10);
+  const saved = lsGet('gfa_daily_images', {date:today, count:0});
+  if(saved.date !== today) return {date:today, count:0};
+  return saved;
+}
+function canGenerateDailyImage(){
+  return getDailyImageUsage().count < 3;
+}
+function recordDailyImageGeneration(){
+  const usage = getDailyImageUsage();
+  usage.count += 1;
+  lsSet('gfa_daily_images', usage);
+  return usage.count;
+}
+
 async function runStudioGenerate(){
   const promptEl = document.getElementById('studio-prompt');
   const resultEl = document.getElementById('studio-result');
   const prompt = (promptEl?.value || '').trim();
+
+  if(!canGenerateDailyImage()){
+    showToast('Daily demo limit reached — 3 images per day.');
+    resultEl.innerHTML = '<div class="card" style="border-color:var(--red);"><strong style="color:var(--red);">Daily limit reached</strong><p style="margin-top:8px;color:var(--text-dim);font-size:13px;line-height:1.5;">The free demo allows 3 AI images per day. Try again tomorrow.</p></div>';
+    return;
+  }
 
   if(!prompt){
     showToast('Please enter a prompt first.');
@@ -1048,8 +1070,9 @@ async function runStudioGenerate(){
         </div>
       </div>`;
 
+    const dailyCount = recordDailyImageGeneration();
     logToolUsage('ai-image-studio', 'text-to-image', 'success');
-    showToast('Image generated successfully.');
+    showToast('Image generated successfully — '+dailyCount+'/3 today.');
   }catch(err){
     console.error('Graphic Fiction AI generation error:', err);
     resultEl.innerHTML = `
