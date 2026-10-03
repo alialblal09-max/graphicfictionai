@@ -18,13 +18,11 @@ export default {
         });
 
         const referenceImage = String(body.referenceImage || "");
-        const faceImage = String(body.faceImage || "");
         let result;
 
         const hasMainReference = referenceImage.startsWith("data:image/");
-        const hasFaceReference = faceImage.startsWith("data:image/");
 
-        if (hasMainReference || hasFaceReference) {
+        if (hasMainReference) {
           const refs = [];
 
           function dataUrlToBlob(dataUrl, label) {
@@ -40,23 +38,13 @@ export default {
             return new Blob([bytes], {type:mime});
           }
 
-          if (hasMainReference) refs.push({
+          refs.push({
             key:"input_image_0",
-            blob:dataUrlToBlob(referenceImage, "main reference"),
-            name:"main-reference.jpg"
+            blob:dataUrlToBlob(referenceImage, "reference"),
+            name:"reference.jpg"
           });
 
-          if (hasFaceReference) refs.push({
-            key:hasMainReference ? "input_image_1" : "input_image_0",
-            blob:dataUrlToBlob(faceImage, "face reference"),
-            name:"face-reference.jpg"
-          });
-
-          const identityInstruction = hasMainReference && hasFaceReference
-            ? "Image 0 is the user's main photo and image 1 is a clear close-up face reference of the same person. Treat both images as references for the SAME PERSON. Use image 1 primarily to preserve facial identity and image 0 to preserve body, proportions, hairstyle, clothing context and overall appearance. Do not invent a different person. Keep recognizable facial structure, eyes, nose, mouth, jawline, skin tone, hairline and body proportions consistent. Change only the scene, pose, clothing or environment requested by the user."
-            : hasFaceReference
-              ? "Image 0 is a clear face reference of the user. Use it as the primary identity reference. Preserve the same facial identity, facial structure, eyes, nose, mouth, jawline, skin tone and hairline. Do not replace the person with a different face."
-              : "Image 0 is the user's main photo. Preserve the same person, facial identity, facial structure, hairstyle, skin tone, body proportions and recognizable appearance. Do not replace the person with a different face.";
+          const identityInstruction = "Image 0 is the user's photo. Use this single image as the primary reference for the SAME PERSON. Preserve recognizable facial identity, facial structure, eyes, nose, mouth, jawline, skin tone, hairline, hairstyle and body proportions. Do not invent or replace the person with a different face. Change only the scene, pose, clothing or environment requested by the user's prompt.";
 
           const form = new FormData();
           form.append("prompt", identityInstruction + " " + prompt);
