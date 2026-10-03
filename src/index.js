@@ -9,7 +9,23 @@ export default {
 
     if (request.method === "OPTIONS") return new Response(null, {headers: cors});
 
+    function recordUsage(tool) {
+      try {
+        if (!env.ANALYTICS) return;
+        const clientId = String(request.headers.get("X-GFA-Client-ID") || "anonymous").slice(0, 128);
+        const country = String(request.cf?.country || "unknown").slice(0, 16);
+        env.ANALYTICS.writeDataPoint({
+          blobs: [tool, clientId, country],
+          doubles: [1],
+          indexes: [clientId]
+        });
+      } catch (analyticsError) {
+        console.error("Analytics write error:", analyticsError);
+      }
+    }
+
     if (url.pathname === "/api/text-to-image" && request.method === "POST") {
+      recordUsage("text-to-image");
       try {
         const body = await request.json();
         const prompt = String(body.prompt || "").trim().slice(0, 500);
@@ -89,6 +105,7 @@ export default {
     }
 
     if (url.pathname === "/api/image-enhance" && request.method === "POST") {
+      recordUsage("image-enhance");
       try {
         if (!env.AI) throw new Error("Cloudflare Workers AI is not configured.");
 
@@ -284,6 +301,7 @@ export default {
     }
 
     if (url.pathname === "/api/design-assistant" && request.method === "POST") {
+      recordUsage("design-assistant");
       try {
         const body = await request.json();
         const type = String(body.type || "Brand").trim().slice(0, 80);
