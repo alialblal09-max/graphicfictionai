@@ -11,5 +11,11 @@
   },
   "images": {
     "binding": "IMAGES"
-  }
+  },
+  "analytics_engine_datasets": [
+    {
+      "binding": "ANALYTICS",
+      "dataset": "graphicfiction_ai_usage"
+    }
+  ]
 }
