@@ -93,7 +93,13 @@ export default {
         });
 
         const resultBuffer = await response.arrayBuffer();
-        const resultBase64 = btoa(String.fromCharCode(...new Uint8Array(resultBuffer)));
+        const resultBytes = new Uint8Array(resultBuffer);
+        let binary = "";
+        const chunkSize = 0x8000;
+        for (let i = 0; i < resultBytes.length; i += chunkSize) {
+          binary += String.fromCharCode(...resultBytes.subarray(i, Math.min(i + chunkSize, resultBytes.length)));
+        }
+        const resultBase64 = btoa(binary);
 
         return new Response(JSON.stringify({
           image: `data:image/webp;base64,${resultBase64}`,
