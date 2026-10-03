@@ -39,6 +39,81 @@ export default {
       }
     }
 
+    if (url.pathname === "/api/image-enhance" && request.method === "POST") {
+      try {
+        if (!env.IMAGES) throw new Error("Image enhancement is not configured yet.");
+        const body = await request.json();
+        const dataUrl = String(body.image || "");
+        const mode = Math.max(0, Math.min(7, Number(body.mode ?? 0)));
+
+        if (!dataUrl.startsWith("data:image/")) {
+          return new Response(JSON.stringify({error:"Please upload a valid image."}), {
+            status:400, headers:{...cors,"Content-Type":"application/json"}
+          });
+        }
+
+        const match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (!match) throw new Error("Invalid image data.");
+        const binary = atob(match[1]);
+        if (binary.length > 20 * 1024 * 1024) throw new Error("Image is too large. Maximum input is 20 MB.");
+
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+        const info = await env.IMAGES.info(bytes);
+        const width = Number(info?.width || 0);
+        const height = Number(info?.height || 0);
+        if (!width || !height) throw new Error("Could not read image dimensions.");
+
+        const scale = mode === 4 ? 4 : 2;
+        const maxPixels = 100_000_000;
+        let targetWidth = Math.max(width, Math.round(width * scale));
+        let targetHeight = Math.max(height, Math.round(height * scale));
+        const pixels = targetWidth * targetHeight;
+
+        if (pixels > maxPixels) {
+          const factor = Math.sqrt(maxPixels / pixels);
+          targetWidth = Math.max(width, Math.floor(targetWidth * factor));
+          targetHeight = Math.max(height, Math.floor(targetHeight * factor));
+        }
+
+        const response = (
+          await env.IMAGES.input(bytes)
+            .transform({
+              width: targetWidth,
+              height: targetHeight,
+              fit: "contain",
+              upscale: "generate"
+            })
+            .output({format:"image/webp"})
+        ).response({
+          headers: {
+            "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"
+          }
+        });
+
+        const resultBuffer = await response.arrayBuffer();
+        const resultBase64 = btoa(String.fromCharCode(...new Uint8Array(resultBuffer)));
+
+        return new Response(JSON.stringify({
+          image: `data:image/webp;base64,${resultBase64}`,
+          width: targetWidth,
+          height: targetHeight,
+          mode
+        }), {
+          headers:{...cors,"Content-Type":"application/json"}
+        });
+      } catch (err) {
+        console.error("Image Enhance error:", err);
+        return new Response(JSON.stringify({
+          error:"Image enhancement failed",
+          details:String(err?.message || err)
+        }), {
+          status:500, headers:{...cors,"Content-Type":"application/json"}
+        });
+      }
+    }
+
     if (url.pathname === "/api/design-assistant" && request.method === "POST") {
       try {
         const body = await request.json();
