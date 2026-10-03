@@ -487,6 +487,7 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
       <button class="dash-nav-item" data-dash="studio" onclick="switchDash('studio')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg><span class="label">AI Studio</span></button>
       <button class="dash-nav-item" data-dash="enhancer" onclick="switchDash('enhancer')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 2L3 14h7l-1 8 11-14h-7z"/></svg><span class="label">Image Enhancer</span></button>
       <button class="dash-nav-item" data-dash="bgremove" onclick="switchDash('bgremove')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4h16v16H4z"/><path d="M4 15l5-5 4 4 3-3 4 4"/></svg><span class="label">Background Remover</span></button>
+      <button class="dash-nav-item" data-dash="chat" onclick="switchDash('chat')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.2 8.2 0 0 1-4-.9L4 20l1.1-3.4A7.4 7.4 0 0 1 4 12c0-4.1 3.6-7.5 8-7.5s8 3.1 8 7z"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg><span class="label">AI Chat</span></button>
       <button class="dash-nav-item" data-dash="assistant" onclick="switchDash('assistant')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg><span class="label">Design Assistant</span></button>
       <button class="dash-nav-item" data-dash="projects" onclick="switchDash('projects')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7l2-3h5l2 3h9v11a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg><span class="label">Projects</span></button>
       <button class="dash-nav-item" data-dash="credits" onclick="switchDash('credits')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span class="label">Credits</span></button>
@@ -614,6 +615,25 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
           </div>
           <div class="card">
             <div id="bg-result"><div class="result-canvas"><span style="color:var(--text-faint); font-size:13px;">Result will appear here</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI CHAT -->
+      <div id="dash-chat" class="hidden">
+        <div class="page-head">
+          <h1>AI Chat</h1>
+          <p>Talk naturally with Graphic Fiction AI. Egyptian Arabic is the default; other languages are supported automatically.</p>
+        </div>
+        <div class="card" style="padding:0; overflow:hidden;">
+          <div id="gfa-chat-messages" style="min-height:420px; max-height:58vh; overflow:auto; padding:20px; display:flex; flex-direction:column; gap:12px;">
+            <div class="chat-bubble assistant" style="align-self:flex-start; max-width:85%; padding:12px 14px; border:1px solid var(--border-strong); border-radius:14px 14px 14px 4px; background:var(--surface-2); color:var(--text-dim); line-height:1.6;">
+              أهلاً بيك 👋 أنا Graphic Fiction AI. كلّمني بالمصري أو بأي لغة، وأنا هرد عليك بنفس اللغة.
+            </div>
+          </div>
+          <div style="border-top:1px solid var(--border); padding:14px; display:flex; gap:10px; align-items:flex-end;">
+            <textarea id="gfa-chat-input" rows="2" placeholder="اكتب رسالتك هنا... / Type your message..." style="flex:1; resize:vertical; min-height:48px; max-height:140px;"></textarea>
+            <button class="btn btn-gold" id="gfa-chat-send" onclick="sendGfaChat()">Send</button>
           </div>
         </div>
       </div>
@@ -913,6 +933,180 @@ function conjureHero(){
   }, 1700);
 }
 
+
+/* ---------- live AI: image studio + chat ---------- */
+function getActiveChipText(groupId){
+  const el = document.querySelector('#'+groupId+' .opt-chip.active');
+  return el ? el.textContent.trim() : '';
+}
+
+function dataUrlFromFile(file, maxSide){
+  return new Promise((resolve,reject)=>{
+    if(!file) return resolve('');
+    const reader=new FileReader();
+    reader.onerror=()=>reject(new Error('Could not read the image.'));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        const scale=Math.min(1, maxSide/img.naturalWidth, maxSide/img.naturalHeight);
+        const w=Math.max(1, Math.round(img.naturalWidth*scale));
+        const h=Math.max(1, Math.round(img.naturalHeight*scale));
+        const canvas=document.createElement('canvas');
+        canvas.width=w; canvas.height=h;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,0,0,w,h);
+        resolve(canvas.toDataURL('image/jpeg',0.88));
+      };
+      img.onerror=()=>reject(new Error('Could not decode the image.'));
+      img.src=reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function ratioSize(ratio){
+  if(ratio==='4:5') return {width:1024,height:1280};
+  if(ratio==='16:9') return {width:1280,height:720};
+  if(ratio==='9:16') return {width:720,height:1280};
+  return {width:1024,height:1024};
+}
+
+async function runStudioGenerate(){
+  const promptEl=document.getElementById('studio-prompt');
+  const resultEl=document.getElementById('studio-result');
+  const fileEl=document.getElementById('studio-upload');
+  const prompt=String(promptEl?.value||'').trim();
+  if(!prompt){
+    showToast('اكتب الـPrompt الأول');
+    promptEl?.focus();
+    return;
+  }
+
+  const btn=document.querySelector('#dash-studio .btn-gold.btn-block');
+  const oldText=btn?.textContent||'Generate';
+  if(btn){btn.disabled=true;btn.textContent='Generating…';}
+
+  resultEl.innerHTML='<div class="result-canvas"><div class="loading-box"><div class="spinner"></div><div>Graphic Fiction AI is generating…</div></div></div>';
+
+  try{
+    const file=fileEl?.files?.[0]||null;
+    const referenceImage=file ? await dataUrlFromFile(file,512) : '';
+    const size=ratioSize(getActiveChipText('studio-ratios'));
+    const mode=getActiveChipText('studio-mode');
+
+    const response=await fetch('/api/text-to-image',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'X-GFA-Client-ID':getClientId()
+      },
+      body:JSON.stringify({
+        prompt,
+        referenceImage,
+        width:size.width,
+        height:size.height,
+        mode
+      })
+    });
+
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || !data.image){
+      throw new Error(data.details||data.error||'Generation failed.');
+    }
+
+    resultEl.innerHTML=
+      '<div class="result-canvas"><img src="'+data.image+'" alt="Generated image"></div>'+
+      '<div class="result-actions">'+
+      '<a class="btn btn-ghost" href="'+data.image+'" download="graphic-fiction-ai.png">Download</a>'+
+      '<button class="btn btn-ghost" type="button" onclick="document.getElementById(\'studio-prompt\').focus()">Refine prompt</button>'+
+      '</div>';
+
+    logToolUsage('AI Image Studio', mode || 'Image generation', 'Success');
+    showToast('الصورة اتولدت بنجاح ✨');
+  }catch(err){
+    console.error(err);
+    resultEl.innerHTML='<div class="result-canvas"><span style="color:var(--text-dim);padding:20px;text-align:center;">'+
+      (err.message||'Generation failed')+'</span></div>';
+    logToolUsage('AI Image Studio', 'Generation', 'Failed');
+    showToast('حصلت مشكلة في التوليد');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=oldText;}
+  }
+}
+
+function getClientId(){
+  try{
+    let id=localStorage.getItem('gfa_client_id');
+    if(!id){
+      id=(crypto.randomUUID ? crypto.randomUUID() : 'gfa-'+Date.now()+'-'+Math.random().toString(36).slice(2));
+      localStorage.setItem('gfa_client_id',id);
+    }
+    return id;
+  }catch(e){ return 'anonymous'; }
+}
+
+function appendGfaChat(role,text){
+  const box=document.getElementById('gfa-chat-messages');
+  if(!box) return;
+  const div=document.createElement('div');
+  const isUser=role==='user';
+  div.style.cssText='align-self:'+(isUser?'flex-end':'flex-start')+';max-width:85%;padding:12px 14px;border:1px solid var(--border-strong);border-radius:'+(isUser?'14px 14px 4px 14px':'14px 14px 14px 4px')+';background:'+(isUser?'var(--gold-soft)':'var(--surface-2)')+';color:var(--text-dim);line-height:1.6;white-space:pre-wrap;';
+  div.textContent=text;
+  box.appendChild(div);
+  box.scrollTop=box.scrollHeight;
+}
+
+let gfaChatHistory=[];
+async function sendGfaChat(){
+  const input=document.getElementById('gfa-chat-input');
+  const send=document.getElementById('gfa-chat-send');
+  const text=String(input?.value||'').trim();
+  if(!text) return;
+
+  appendGfaChat('user',text);
+  gfaChatHistory.push({role:'user',content:text});
+  input.value='';
+  if(send){send.disabled=true;send.textContent='…';}
+
+  const box=document.getElementById('gfa-chat-messages');
+  const typing=document.createElement('div');
+  typing.id='gfa-chat-typing';
+  typing.style.cssText='align-self:flex-start;max-width:85%;padding:12px 14px;border:1px solid var(--border-strong);border-radius:14px 14px 14px 4px;background:var(--surface-2);color:var(--text-faint);';
+  typing.textContent='Graphic Fiction AI is thinking…';
+  box?.appendChild(typing);
+  if(box) box.scrollTop=box.scrollHeight;
+
+  try{
+    const response=await fetch('/api/chat',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'X-GFA-Client-ID':getClientId()
+      },
+      body:JSON.stringify({messages:gfaChatHistory})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || !data.text) throw new Error(data.details||data.error||'Chat failed.');
+    gfaChatHistory.push({role:'assistant',content:data.text});
+    document.getElementById('gfa-chat-typing')?.remove();
+    appendGfaChat('assistant',data.text);
+  }catch(err){
+    document.getElementById('gfa-chat-typing')?.remove();
+    appendGfaChat('assistant','حصلت مشكلة في الاتصال بالـAI. جرّب تاني بعد لحظة.');
+    showToast('Chat unavailable');
+  }finally{
+    if(send){send.disabled=false;send.textContent='Send';}
+    input?.focus();
+  }
+}
+
+const _gfaChatInput=document.getElementById('gfa-chat-input');
+if(_gfaChatInput){
+  _gfaChatInput.addEventListener('keydown',e=>{
+    if(e.key==='Enter' && !e.shiftKey){e.preventDefault();sendGfaChat();}
+  });
+}
+
 /* ---------- view routing ---------- */
 function switchView(view){
   ['landing','auth','dashboard','admin'].forEach(v=>{
@@ -929,7 +1123,7 @@ function switchView(view){
 function switchAuth(tab){
   ['login','signup','forgot'].forEach(t=>document.getElementById('auth-'+t).classList.toggle('hidden', t!==tab));
 }
-const dashLabels={home:'Dashboard home',studio:'AI Image Studio',enhancer:'AI Image Enhancer',bgremove:'Background Remover',assistant:'Design Assistant',projects:'Projects',credits:'Credits',settings:'Settings'};
+const dashLabels={home:'Dashboard home',studio:'AI Image Studio',enhancer:'AI Image Enhancer',bgremove:'Background Remover',chat:'AI Chat',assistant:'Design Assistant',projects:'Projects',credits:'Credits',settings:'Settings'};
 function switchDash(page){
   document.querySelectorAll('#view-dashboard > .dash-shell > .dash-main > div').forEach(el=>el.classList.add('hidden'));
   document.getElementById('dash-'+page).classList.remove('hidden');
