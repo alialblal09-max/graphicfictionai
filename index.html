@@ -998,3 +998,75 @@ function lsSet(key, value){
 function logToolUsage(tool, mode, status){
   const usage = lsGet('gfa_usage', []);
   usage.push({tool, mode, status, at:new Date().toISOString()});
+  lsSet('gfa_usage', usage);
+}
+
+/* ---------- real Cloudflare Workers AI image generation ---------- */
+async function runStudioGenerate(){
+  const promptEl = document.getElementById('studio-prompt');
+  const resultEl = document.getElementById('studio-result');
+  const prompt = (promptEl?.value || '').trim();
+
+  if(!prompt){
+    showToast('Please enter a prompt first.');
+    promptEl?.focus();
+    return;
+  }
+
+  const button = document.querySelector('#dash-studio button[onclick="runStudioGenerate()"]');
+  if(button){
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = 'Generating…';
+  }
+
+  resultEl.innerHTML = '<div class="spellbook-loading"><div class="spinner" style="width:18px;height:18px;margin:0;"></div><span>Generating with Graphic Fiction AI…</span></div>';
+
+  try{
+    const response = await fetch('/api/text-to-image', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({prompt})
+    });
+
+    const data = await response.json().catch(()=>({}));
+
+    if(!response.ok){
+      throw new Error(data.details || data.message || data.error || 'Generation failed');
+    }
+
+    if(!data.image){
+      throw new Error('The AI returned no image.');
+    }
+
+    resultEl.innerHTML = `
+      <div class="card" style="padding:14px;">
+        <img src="${data.image}" alt="AI generated result" style="width:100%; border-radius:10px; display:block;">
+        <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+          <a class="btn btn-gold btn-sm" href="${data.image}" download="graphic-fiction-ai.jpg">Download Image</a>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="navigator.clipboard?.writeText(this.closest('.card').querySelector('img').src); showToast('Image data copied');">Copy Image Data</button>
+        </div>
+      </div>`;
+
+    logToolUsage('ai-image-studio', 'text-to-image', 'success');
+    showToast('Image generated successfully.');
+  }catch(err){
+    console.error('Graphic Fiction AI generation error:', err);
+    resultEl.innerHTML = `
+      <div class="card" style="border-color:var(--red);">
+        <strong style="color:var(--red);">Generation failed</strong>
+        <p style="margin-top:8px;color:var(--text-dim);font-size:13px;line-height:1.5;">${String(err.message || err).replace(/[<>&"]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[s]))}</p>
+      </div>`;
+    logToolUsage('ai-image-studio', 'text-to-image', 'failed');
+  }finally{
+    if(button){
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || 'Generate — 5 credits';
+    }
+  }
+}
+
+}
+</script>
+</body>
+</html>
