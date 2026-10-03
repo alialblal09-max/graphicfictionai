@@ -141,7 +141,7 @@ export default {
         const height = Math.max(256, Math.round((originalHeight * scale) / 8) * 8);
 
         const result = await env.AI.run(
-          "@cf/runwayml/stable-diffusion-v1-5-img2img",
+          "@cf/stabilityai/stable-diffusion-xl-base-1.0",
           {
             prompt,
             negative_prompt: "new objects, changed face, changed identity, distorted body, extra fingers, extra limbs, text, watermark, logo changes, cartoon, painting, oversaturated, blurry, low quality",
