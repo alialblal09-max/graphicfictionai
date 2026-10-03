@@ -16,13 +16,25 @@ export default {
         if (!prompt) return new Response(JSON.stringify({error:"Missing prompt"}), {
           status:400, headers:{...cors,"Content-Type":"application/json"}
         });
-        const result = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", {prompt, steps:4});
-        return new Response(JSON.stringify({image:`data:image/jpeg;base64,${result.image}`}), {
+
+        const result = await env.AI.run(
+          "@cf/black-forest-labs/flux-1-schnell",
+          {prompt, steps:4}
+        );
+
+        return new Response(JSON.stringify({
+          image: `data:image/jpeg;base64,${result.image}`
+        }), {
           headers:{...cors,"Content-Type":"application/json"}
         });
       } catch (err) {
-        return new Response(JSON.stringify({error:"Generation failed"}), {
-          status:500, headers:{...cors,"Content-Type":"application/json"}
+        console.error("FLUX generation error:", err);
+        return new Response(JSON.stringify({
+          error: "Generation failed",
+          details: String(err?.message || err)
+        }), {
+          status:500,
+          headers:{...cors,"Content-Type":"application/json"}
         });
       }
     }
