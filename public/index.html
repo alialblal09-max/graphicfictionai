@@ -338,7 +338,7 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
       </div>
     </div>
   </nav>
-  <div class="beta-banner">You're viewing an early Beta preview — all AI results are sample data, no real charges or AI processing happen here.</div>
+  <div class="beta-banner">BETA — Live AI processing is enabled. Free trial access is active; payments are not connected yet.</div>
 
   <header class="hero">
     <div class="wrap hero-grid-solo">
@@ -425,7 +425,7 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
         <div style="max-width:520px;">
           <div class="section-label">Beta Access</div>
           <h2 class="section-title" style="font-size:22px; margin-bottom:8px;">You're trying an early build.</h2>
-          <p class="section-desc">Every result you see right now is sample data — no real AI processing runs yet. Your feedback during this phase directly shapes what gets built next, so use the Feedback button any time something feels off or great.</p>
+          <p class="section-desc">Live AI processing is enabled for the beta. Test the real tools and send feedback when something needs improvement. Your feedback during this phase directly shapes what gets built next, so use the Feedback button any time something feels off or great.</p>
         </div>
         <button class="btn btn-gold" onclick="switchView('auth');switchAuth('signup')">Try Beta</button>
       </div>
@@ -452,7 +452,7 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
       <div class="field"><label>Email</label><input type="email" placeholder="you@studio.com"></div>
       <div class="field"><label>Password</label><input type="password" placeholder="••••••••"></div>
       <div style="text-align:right; margin-bottom:18px;"><a href="#" style="font-size:12.5px; color:var(--text-dim);" onclick="switchAuth('forgot');return false;">Forgot password?</a></div>
-      <button class="btn btn-gold btn-block" onclick="switchView('dashboard');switchDash('home')">Log in</button>
+      <button class="btn btn-gold btn-block" onclick="demoLogin()">Log in</button>
       <div class="auth-foot">No account? <a href="#" onclick="switchAuth('signup');return false;">Sign up</a></div>
     </div>
 
@@ -462,7 +462,7 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
       <div class="sub">Get free credits to start creating</div>
       <div class="field"><label>Name</label><input type="text" id="signup-name" placeholder="Your name"></div>
       <div class="field"><label>Email</label><input type="email" id="signup-email" placeholder="you@studio.com"></div>
-      <div class="field"><label>Password</label><input type="password" placeholder="••••••••"></div>
+      <div class="field"><label>Password</label><input type="password" id="signup-password" placeholder="••••••••"></div>
       <button class="btn btn-gold btn-block" onclick="demoSignup()">Create account</button>
       <div class="auth-foot">Already have an account? <a href="#" onclick="switchAuth('login');return false;">Log in</a></div>
     </div>
@@ -471,8 +471,8 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
       <div class="brand"><span class="mark">GF</span>Graphic Fiction AI</div>
       <h2>Reset password</h2>
       <div class="sub">We'll send a reset link to your email</div>
-      <div class="field"><label>Email</label><input type="email" placeholder="you@studio.com"></div>
-      <button class="btn btn-gold btn-block" onclick="showToast('Reset link sent (mock)')">Send reset link</button>
+      <div class="field"><label>Email</label><input type="email" id="forgot-email" placeholder="you@studio.com"></div>
+      <button class="btn btn-gold btn-block" onclick="demoForgot()">Reset locally</button>
       <div class="auth-foot"><a href="#" onclick="switchAuth('login');return false;">Back to login</a></div>
     </div>
   </div>
@@ -726,7 +726,7 @@ footer.site-footer{padding:40px 0; border-top:1px solid var(--border);}
           <div id="set-preferences" class="hidden">
             <div class="price-row"><div class="name">Dark mode<span>Currently the only theme available</span></div><input type="checkbox" checked disabled></div>
             <div class="price-row"><div class="name">Default aspect ratio</div><select style="width:110px;"><option>1:1</option><option>4:5</option><option>16:9</option></select></div>
-            <div class="price-row"><div class="name">Beta Mode<span>All AI results are simulated during this phase</span></div><span class="badge success">ON</span></div>
+            <div class="price-row"><div class="name">Live AI<span>Workers AI processing is enabled</span></div><span class="badge success">ON</span></div>
           </div>
         </div>
       </div>
@@ -1192,3 +1192,255 @@ function lsSet(key, value){
 function logToolUsage(tool, mode, status){
   const usage = lsGet('gfa_usage', []);
   usage.push({tool, mode, status, at:new Date().toISOString()});
+
+  lsSet('gfa_usage', usage.slice(-500));
+}
+
+/* ---------- functional beta account ---------- */
+async function gfaHash(value){
+  const data=new TextEncoder().encode(String(value||''));
+  const digest=await crypto.subtle.digest('SHA-256',data);
+  return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function getCurrentUser(){ return lsGet('gfa_current_user', null); }
+function setCurrentUser(user){ lsSet('gfa_current_user', user); }
+
+async function demoSignup(){
+  const name=String(document.getElementById('signup-name')?.value||'').trim();
+  const email=String(document.getElementById('signup-email')?.value||'').trim().toLowerCase();
+  const password=String(document.getElementById('signup-password')?.value||'');
+  if(name.length<2) return showToast('اكتب اسمك بشكل صحيح');
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showToast('اكتب إيميل صحيح');
+  if(password.length<8) return showToast('الباسورد لازم يكون 8 حروف على الأقل');
+  const users=lsGet('gfa_users',[]);
+  if(users.some(u=>u.email===email)) return showToast('الإيميل ده مسجل بالفعل — اعمل Login');
+  const passwordHash=await gfaHash(password);
+  const user={id:'user-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8),name,email,passwordHash,createdAt:new Date().toISOString(),credits:100};
+  users.push(user);
+  lsSet('gfa_users',users);
+  setCurrentUser({id:user.id,name:user.name,email:user.email,credits:user.credits});
+  lsSet('gfa_signup_events',[...lsGet('gfa_signup_events',[]),{id:user.id,name,email,at:new Date().toISOString()}].slice(-200));
+  showToast('الحساب اتعمل بنجاح ✨');
+  switchView('dashboard'); switchDash('home');
+}
+async function demoLogin(){
+  const email=String(document.getElementById('login-email')?.value||'').trim().toLowerCase();
+  const password=String(document.getElementById('login-password')?.value||'');
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !password) return showToast('اكتب الإيميل والباسورد');
+  const users=lsGet('gfa_users',[]);
+  const user=users.find(u=>u.email===email);
+  if(!user || user.passwordHash!==await gfaHash(password)) return showToast('الإيميل أو الباسورد غير صحيح');
+  setCurrentUser({id:user.id,name:user.name,email:user.email,credits:user.credits??100});
+  showToast('Welcome back 👋');
+  switchView('dashboard'); switchDash('home');
+}
+async function demoForgot(){
+  const email=String(document.getElementById('forgot-email')?.value||'').trim().toLowerCase();
+  const user=lsGet('gfa_users',[]).find(u=>u.email===email);
+  if(!user) return showToast('الحساب ده مش موجود على الجهاز');
+  showToast('الحساب موجود. اعمل Login بالباسورد الحالي.');
+}
+
+/* ---------- real AI enhancer ---------- */
+let gfaEnhImage='';
+let gfaEnhMode=0;
+function handleEnhUpload(input){
+  const file=input?.files?.[0];
+  if(!file) return;
+  dataUrlFromFile(file,2048).then(data=>{
+    gfaEnhImage=data;
+    document.getElementById('enh-modes')?.classList.remove('hidden');
+    const result=document.getElementById('enh-result');
+    if(result) result.innerHTML='<div class="result-canvas"><img src="'+data+'" alt="Original image"></div>';
+  }).catch(()=>showToast('مش قادر أقرأ الصورة'));
+}
+function selectMode(el,mode){
+  gfaEnhMode=Math.max(0,Math.min(7,Number(mode)||0));
+  document.querySelectorAll('#enh-mode-grid .mode-card').forEach(x=>x.classList.remove('active'));
+  el?.classList.add('active');
+}
+async function runEnhance(){
+  if(!gfaEnhImage) return showToast('ارفع صورة الأول');
+  const btn=document.querySelector('#dash-enhancer .btn-gold.btn-block');
+  if(btn){btn.disabled=true;btn.textContent='Enhancing…';}
+  const result=document.getElementById('enh-result');
+  if(result) result.innerHTML='<div class="result-canvas"><div class="loading-box"><div class="spinner"></div><div>AI is enhancing your image…</div></div></div>';
+  try{
+    const response=await fetch('/api/image-enhance',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-GFA-Client-ID':getClientId()},
+      body:JSON.stringify({image:gfaEnhImage,mode:gfaEnhMode})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || !data.image) throw new Error(data.details||data.error||'Image enhancement failed.');
+    if(result) result.innerHTML='<div class="result-canvas"><img src="'+data.image+'" alt="Enhanced image"></div><div class="result-actions"><a class="btn btn-ghost" href="'+data.image+'" download="graphic-fiction-enhanced.png">Download</a></div>';
+    logToolUsage('AI Image Enhancer',String(gfaEnhMode),'Success');
+    showToast('الصورة اتحسنت بنجاح ✨');
+  }catch(err){
+    if(result) result.innerHTML='<div class="result-canvas"><span style="padding:20px;text-align:center;">'+(err.message||'Enhancement failed')+'</span></div>';
+    logToolUsage('AI Image Enhancer',String(gfaEnhMode),'Failed');
+    showToast('Enhancer: حصلت مشكلة');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Enhance — '+(document.getElementById('enh-cost')?.textContent||'3')+' credits';}
+  }
+}
+
+/* ---------- real background remover ---------- */
+let gfaBgImage='';
+function handleBgUpload(input){
+  const file=input?.files?.[0];
+  if(!file) return;
+  dataUrlFromFile(file,2048).then(data=>{
+    gfaBgImage=data;
+    document.getElementById('bg-run-btn')?.classList.remove('hidden');
+    const result=document.getElementById('bg-result');
+    if(result) result.innerHTML='<div class="result-canvas"><img src="'+data+'" alt="Original image"></div>';
+  }).catch(()=>showToast('مش قادر أقرأ الصورة'));
+}
+async function runBgRemove(){
+  if(!gfaBgImage) return showToast('ارفع صورة الأول');
+  const btn=document.getElementById('bg-run-btn');
+  if(btn){btn.disabled=true;btn.textContent='Removing background…';}
+  const result=document.getElementById('bg-result');
+  if(result) result.innerHTML='<div class="result-canvas"><div class="loading-box"><div class="spinner"></div><div>Removing background…</div></div></div>';
+  try{
+    const response=await fetch('/api/remove-background',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-GFA-Client-ID':getClientId()},
+      body:JSON.stringify({image:gfaBgImage})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || !data.image) throw new Error(data.details||data.error||'Background removal failed.');
+    if(result) result.innerHTML='<div class="result-canvas checker"><img src="'+data.image+'" alt="Background removed"></div><div class="result-actions"><a class="btn btn-ghost" href="'+data.image+'" download="graphic-fiction-cutout.png">Download PNG</a></div>';
+    logToolUsage('Background Remover','Foreground segmentation','Success');
+    showToast('الخلفية اتشالت بنجاح ✨');
+  }catch(err){
+    if(result) result.innerHTML='<div class="result-canvas"><span style="padding:20px;text-align:center;">'+(err.message||'Background removal failed')+'</span></div>';
+    logToolUsage('Background Remover','Foreground segmentation','Failed');
+    showToast('Background Remover: حصلت مشكلة');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Remove Background — 2 credits';}
+  }
+}
+
+/* ---------- real design assistant ---------- */
+async function runAssistant(){
+  const idea=String(document.getElementById('assist-input')?.value||'').trim();
+  const type=String(document.getElementById('assist-type')?.value||'Brand');
+  const tone=String(document.getElementById('assist-tone')?.value||'Modern');
+  const out=document.getElementById('assist-result');
+  if(!idea) return showToast('اكتب فكرة التصميم الأول');
+  const btn=document.querySelector('#dash-assistant .btn-gold');
+  if(btn){btn.disabled=true;btn.textContent='Creating…';}
+  if(out) out.innerHTML='<div class="card" style="margin-top:16px;">Graphic Fiction AI is thinking…</div>';
+  try{
+    const response=await fetch('/api/design-assistant',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-GFA-Client-ID':getClientId()},
+      body:JSON.stringify({type,idea,tone})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || !data.text) throw new Error(data.details||data.error||'Assistant failed.');
+    if(out) out.innerHTML='<div class="card" style="margin-top:16px;white-space:pre-wrap;line-height:1.7;">'+escapeHtml(data.text)+'</div>';
+    logToolUsage('Design Assistant',type,'Success');
+  }catch(err){
+    if(out) out.innerHTML='<div class="card" style="margin-top:16px;color:var(--red);">'+escapeHtml(err.message||'Assistant failed')+'</div>';
+    logToolUsage('Design Assistant',type,'Failed');
+    showToast('Design Assistant: حصلت مشكلة');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Generate Concept — 3 credits';}
+  }
+}
+function escapeHtml(value){
+  return String(value||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+/* ---------- real landing generator ---------- */
+async function conjureHero(){
+  const prompt=String(document.getElementById('hero-prompt')?.value||'').trim();
+  const box=document.getElementById('hero-try-result');
+  if(!prompt) return showToast('اكتب فكرتك الأول');
+  if(box) box.innerHTML='<div class="spellbook-loading"><div class="spinner" style="width:18px;height:18px;margin:0;"></div><span>Graphic Fiction AI is generating…</span></div>';
+  try{
+    const response=await fetch('/api/text-to-image',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-GFA-Client-ID':getClientId()},
+      body:JSON.stringify({prompt,width:1024,height:1024,referenceImage:''})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || !data.image) throw new Error(data.details||data.error||'Generation failed.');
+    if(box) box.innerHTML='<div class="hero-result-card"><img src="'+data.image+'" alt="Generated preview"><div class="txt"><strong>LIVE AI RESULT</strong>Generated by Graphic Fiction AI — <a href="#" onclick="switchView(\'auth\');switchAuth(\'signup\');return false;">Create a free beta account</a> to keep creating.</div></div>';
+    logToolUsage('Landing Image Generator','Teaser','Success');
+  }catch(err){
+    if(box) box.innerHTML='<div class="error-box"><h4>Generation unavailable</h4><p>'+escapeHtml(err.message||'Try again in a moment.')+'</p></div>';
+    logToolUsage('Landing Image Generator','Teaser','Failed');
+  }
+}
+
+/* ---------- dashboard/admin helpers ---------- */
+function updateUserDisplay(){
+  const user=getCurrentUser();
+  const name=user?.name||'Beta User';
+  const email=user?.email||'';
+  const els=['sidebar-user-name','dash-user-name','dashboard-user-name','home-user-name'];
+  els.forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=name;});
+  const emailEl=document.getElementById('dash-user-email'); if(emailEl) emailEl.textContent=email;
+  const creditEls=['dash-credit-balance','credit-balance','current-credit'];
+  creditEls.forEach(id=>{const el=document.getElementById(id);if(el&&user)el.textContent=String(user.credits??100);});
+}
+function renderAdminData(){
+  const usage=lsGet('gfa_usage',[]);
+  const users=lsGet('gfa_signup_events',[]);
+  const failed=usage.filter(x=>String(x.status).toLowerCase().includes('fail'));
+  const stats=document.getElementById('admin-stats');
+  if(stats) stats.innerHTML='<div class="stat-card"><div class="label">Local signups</div><div class="val">'+users.length+'</div></div><div class="stat-card"><div class="label">Tool runs</div><div class="val">'+usage.length+'</div></div><div class="stat-card"><div class="label">Failures</div><div class="val">'+failed.length+'</div></div><div class="stat-card"><div class="label">AI status</div><div class="val">LIVE</div></div>';
+  const table=document.getElementById('admin-generations-table');
+  if(table) table.innerHTML=usage.length?'<div style="overflow:auto;"><table class="tx-table"><tr><th>Tool</th><th>Mode</th><th>Status</th><th>Date</th></tr>'+usage.slice().reverse().slice(0,100).map(x=>'<tr><td>'+escapeHtml(x.tool)+'</td><td>'+escapeHtml(x.mode)+'</td><td>'+escapeHtml(x.status)+'</td><td>'+escapeHtml(new Date(x.at).toLocaleString())+'</td></tr>').join('')+'</table></div>':'<p style="padding:18px;color:var(--text-faint)">No tool activity yet.</p>';
+  const usersTable=document.getElementById('admin-users-table');
+  if(usersTable) usersTable.innerHTML=users.length?'<div style="overflow:auto;"><table class="tx-table"><tr><th>Name</th><th>Email</th><th>Created</th></tr>'+users.slice().reverse().map(x=>'<tr><td>'+escapeHtml(x.name)+'</td><td>'+escapeHtml(x.email)+'</td><td>'+escapeHtml(new Date(x.at).toLocaleString())+'</td></tr>').join('')+'</table></div>':'<p style="padding:18px;color:var(--text-faint)">No local beta signups yet.</p>';
+  const failedTable=document.getElementById('admin-failed-table');
+  if(failedTable) failedTable.innerHTML=failed.length?failed.slice().reverse().slice(0,50).map(x=>'<div style="padding:10px 0;border-bottom:1px solid var(--border)"><strong>'+escapeHtml(x.tool)+'</strong> — '+escapeHtml(x.mode)+' — '+escapeHtml(x.status)+'</div>').join(''):'<p style="color:var(--text-faint)">No failures recorded on this device.</p>';
+}
+function clearBetaData(){
+  ['gfa_usage','gfa_signup_events'].forEach(k=>{try{localStorage.removeItem(k);}catch(e){}});
+  renderAdminData(); showToast('Local demo analytics cleared');
+}
+function openFeedback(){
+  const el=document.getElementById('feedback-overlay');
+  const ctx=document.getElementById('fb-context');
+  if(ctx)ctx.textContent='Context: '+currentContext;
+  el?.classList.remove('hidden');
+}
+function closeFeedback(){document.getElementById('feedback-overlay')?.classList.add('hidden');}
+function setStars(n){
+  fbStarsValue=Math.max(0,Math.min(5,Number(n)||0));
+  document.querySelectorAll('#fb-stars .star').forEach((s,i)=>s.classList.toggle('on',i<fbStarsValue));
+}
+function submitFeedback(){
+  const item={rating:fbStarsValue,tried:document.getElementById('fb-tried')?.value||'',liked:document.getElementById('fb-liked')?.value||'',improve:document.getElementById('fb-improve')?.value||'',bug:!!document.getElementById('fb-is-bug')?.checked,context:currentContext,at:new Date().toISOString()};
+  lsSet('gfa_feedback',[...lsGet('gfa_feedback',[]),item].slice(-200));
+  closeFeedback(); showToast('شكراً — الفيدباك اتسجل على الجهاز');
+}
+function copyFeedback(){
+  const tried=document.getElementById('fb-tried')?.value||'';
+  const liked=document.getElementById('fb-liked')?.value||'';
+  const improve=document.getElementById('fb-improve')?.value||'';
+  const text='Graphic Fiction AI feedback\nContext: '+currentContext+'\nTried: '+tried+'\nLiked: '+liked+'\nImprove: '+improve;
+  if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>showToast('اتنسخ')).catch(()=>showToast('مش قادر أنسخه'));
+}
+
+/* ---------- restore beta session ---------- */
+(function restoreGfaSession(){
+  try{
+    const user=getCurrentUser();
+    if(user){
+      switchView('dashboard');
+      switchDash('home');
+    }else{
+      switchView('landing');
+    }
+  }catch(e){}
+})();
+</script>
+</body>
+</html>
