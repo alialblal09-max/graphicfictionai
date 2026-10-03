@@ -1076,6 +1076,8 @@ async function sendGfaChat(){
   box?.appendChild(typing);
   if(box) box.scrollTop=box.scrollHeight;
 
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),45000);
   try{
     const response=await fetch('/api/chat',{
       method:'POST',
@@ -1083,18 +1085,23 @@ async function sendGfaChat(){
         'Content-Type':'application/json',
         'X-GFA-Client-ID':getClientId()
       },
-      body:JSON.stringify({messages:gfaChatHistory})
+      body:JSON.stringify({messages:gfaChatHistory}),
+      signal:controller.signal
     });
     const data=await response.json().catch(()=>({}));
-    if(!response.ok || !data.text) throw new Error(data.details||data.error||'Chat failed.');
+    if(!response.ok || !data.text) throw new Error(data.details||data.error||('Chat failed (HTTP '+response.status+').'));
     gfaChatHistory.push({role:'assistant',content:data.text});
     document.getElementById('gfa-chat-typing')?.remove();
     appendGfaChat('assistant',data.text);
   }catch(err){
     document.getElementById('gfa-chat-typing')?.remove();
-    appendGfaChat('assistant','حصلت مشكلة في الاتصال بالـAI. جرّب تاني بعد لحظة.');
-    showToast('Chat unavailable');
+    const message=err?.name==='AbortError'
+      ? 'الـAI أخد وقت أطول من المتوقع. جرّب الرسالة تاني.'
+      : ('حصلت مشكلة في الـAI: '+(err?.message||'جرّب تاني بعد لحظة.'));
+    appendGfaChat('assistant',message);
+    showToast(err?.name==='AbortError'?'AI timeout':'Chat unavailable');
   }finally{
+    clearTimeout(timeout);
     if(send){send.disabled=false;send.textContent='Send';}
     input?.focus();
   }
