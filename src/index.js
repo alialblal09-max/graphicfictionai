@@ -18,28 +18,51 @@ export default {
         });
 
         const referenceImage = String(body.referenceImage || "");
+        const faceImage = String(body.faceImage || "");
         let result;
 
-        if (referenceImage.startsWith("data:image/")) {
-          const match = referenceImage.match(/^data:image\/[^;]+;base64,(.+)$/);
-          if (!match) throw new Error("Invalid reference image.");
+        const hasMainReference = referenceImage.startsWith("data:image/");
+        const hasFaceReference = faceImage.startsWith("data:image/");
 
-          const referenceBinary = atob(match[1]);
-          if (referenceBinary.length > 6 * 1024 * 1024) {
-            throw new Error("Reference image is too large.");
+        if (hasMainReference || hasFaceReference) {
+          const refs = [];
+
+          function dataUrlToBlob(dataUrl, label) {
+            const match = dataUrl.match(/^data:image\/([^;]+);base64,(.+)$/);
+            if (!match) throw new Error("Invalid " + label + " image.");
+            const mime = "image/" + match[1];
+            const binary = atob(match[2]);
+            if (binary.length > 6 * 1024 * 1024) {
+              throw new Error(label + " image is too large.");
+            }
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return new Blob([bytes], {type:mime});
           }
 
-          const referenceBytes = new Uint8Array(referenceBinary.length);
-          for (let i = 0; i < referenceBinary.length; i++) {
-            referenceBytes[i] = referenceBinary.charCodeAt(i);
-          }
+          if (hasMainReference) refs.push({
+            key:"input_image_0",
+            blob:dataUrlToBlob(referenceImage, "main reference"),
+            name:"main-reference.jpg"
+          });
+
+          if (hasFaceReference) refs.push({
+            key:hasMainReference ? "input_image_1" : "input_image_0",
+            blob:dataUrlToBlob(faceImage, "face reference"),
+            name:"face-reference.jpg"
+          });
+
+          const identityInstruction = hasMainReference && hasFaceReference
+            ? "Image 0 is the user's main photo and image 1 is a clear close-up face reference of the same person. Treat both images as references for the SAME PERSON. Use image 1 primarily to preserve facial identity and image 0 to preserve body, proportions, hairstyle, clothing context and overall appearance. Do not invent a different person. Keep recognizable facial structure, eyes, nose, mouth, jawline, skin tone, hairline and body proportions consistent. Change only the scene, pose, clothing or environment requested by the user."
+            : hasFaceReference
+              ? "Image 0 is a clear face reference of the user. Use it as the primary identity reference. Preserve the same facial identity, facial structure, eyes, nose, mouth, jawline, skin tone and hairline. Do not replace the person with a different face."
+              : "Image 0 is the user's main photo. Preserve the same person, facial identity, facial structure, hairstyle, skin tone, body proportions and recognizable appearance. Do not replace the person with a different face.";
 
           const form = new FormData();
-          form.append(
-            "prompt",
-            "Use image 0 as the primary identity and subject reference. Preserve the same person, facial identity, facial structure, hairstyle, skin tone, body proportions and recognizable appearance. Change only the scene, clothing, pose and environment requested by the user. Do not replace the person with a different face. " + prompt
-          );
-          form.append("input_image_0", new Blob([referenceBytes], {type:"image/jpeg"}), "reference.jpg");
+          form.append("prompt", identityInstruction + " " + prompt);
+          for (const ref of refs) {
+            form.append(ref.key, ref.blob, ref.name);
+          }
           form.append("width", "1024");
           form.append("height", "1024");
 
