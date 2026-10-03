@@ -1,8 +1,11 @@
 {
   "$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
   "name": "graphic-fictionai",
-  "main": "image-worker.js",
+  "main": "src/index.js",
   "compatibility_date": "2026-10-03",
   "ai": { "binding": "AI" },
-  "assets": { "directory": "./", "binding": "ASSETS" }
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  }
 }
