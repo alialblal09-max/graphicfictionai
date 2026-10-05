@@ -1034,6 +1034,15 @@ async function runStudioGenerate(){
   }
 }
 
+function analyticsHeaders(){
+  const headers={"Content-Type":"application/json"};
+  try{
+    const id=(typeof getClientId==="function"?getClientId():"");
+    if(id) headers["X-GFA-Client-ID"]=String(id).slice(0,128);
+  }catch(e){}
+  return headers;
+}
+
 function getClientId(){
   try{
     let id=localStorage.getItem('gfa_client_id');
