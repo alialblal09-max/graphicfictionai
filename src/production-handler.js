@@ -24,14 +24,14 @@ async function withTimeout(p,ms){
   try { return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error("AI request timed out.")),ms))]); }
   finally { clearTimeout(timer); }
 }
-async function runText(env,messages,maxTokens=256){
-  const result=await withTimeout(env.AI.run(TEXT_MODEL,{messages,max_tokens:maxTokens,temperature:0.35,top_p:0.85}),12000);
+async function runText(env,messages,maxTokens=256,options={}){
+  const result=await withTimeout(env.AI.run(TEXT_MODEL,{messages,max_tokens:maxTokens,temperature:options.temperature??0.35,top_p:options.top_p??0.85}),12000);
   const text=textOf(result);
   if(!text) throw new Error("AI returned an empty response.");
   return text;
 }
 function normalizeAssistantOutput(text){
-  const canonical = [
+  const canonical=[
     "1) الفكرة:",
     "2) الستايل:",
     "3) الألوان:",
@@ -40,36 +40,57 @@ function normalizeAssistantOutput(text){
     "6) الكوبي المقترح:",
     "7) التنفيذ:"
   ];
-  const badHeadings = {
+  const badHeadings={
     "النادي":"الألوان",
     "التأشيرة":"الخطوط",
     "تقدير الذات":"ترتيب العناصر",
     "الشروط المقترحة":"الكوبي المقترح",
     "الالتزام":"التنفيذ"
   };
-  let out = String(text ?? "").replace(/\r\n/g, "\n");
 
-  out = out.replace(/^(\s*(?:#{1,3}\s*)?\d+[.)]\s*)([^\n:]+)(\s*:)/gm, (match, prefix, heading, colon) => {
-    const key = heading.trim();
-    return prefix + (badHeadings[key] || heading.trim()) + colon;
-  });
+  let out=String(text??"").replace(/\r\n/g,"\n").trim();
 
-  let seen = 0;
-  out = out.replace(/^\s*(?:#{1,3}\s*)?(\d+)[.)]\s*[^\n:]+\s*:/gm, (match, number) => {
-    const n = Number(number);
-    if (n >= 1 && n <= 7) {
-      seen = Math.max(seen, n);
-      return canonical[n - 1];
-    }
-    if (seen < 7) {
-      seen += 1;
-      return canonical[seen - 1];
-    }
-    return match;
-  });
-  return out.trim();
+  out=out.replace(/^(\s*(?:#{1,3}\s*)?\d+[.)]\s*)([^\n:]+)(\s*:)/gm,
+    (match,prefix,heading,colon)=>{
+      const key=heading.trim();
+      return prefix+(badHeadings[key]||heading.trim())+colon;
+    });
+
+  const matches=[...out.matchAll(/^\s*(?:#{1,3}\s*)?(\d+)[.)]\s*[^\n:]+\s*:\s*([\s\S]*?)(?=^\s*(?:#{1,3}\s*)?\d+[.)]\s*[^\n:]+\s*:|$)/gmi)];
+  const sections={};
+  for(const m of matches){
+    const n=Number(m[1]);
+    if(n>=1&&n<=7) sections[n]=m[2].trim();
+  }
+
+  const cleanSection=(value)=>String(value||"")
+    .replace(/^[-*]\s*/gm,"- ")
+    .replace(/\n{3,}/g,"\n\n")
+    .trim();
+
+  return canonical.map((heading,i)=>{
+    const body=cleanSection(sections[i+1]);
+    return heading+"\n"+(body||"—");
+  }).join("\n\n").trim();
 }
 
+function designAssistantNeedsRepair(text){
+  const t=String(text||"");
+  if(!/^1\) الفكرة:[\s\S]*\n\n2\) الستايل:[\s\S]*\n\n3\) الألوان:[\s\S]*\n\n4\) الخطوط:[\s\S]*\n\n5\) ترتيب العناصر:[\s\S]*\n\n6\) الكوبي المقترح:[\s\S]*\n\n7\) التنفيذ:/m.test(t)) return true;
+
+  const colors=(t.match(/3\) الألوان:[\s\S]*?(?=\n\n4\) الخطوط:|$)/)||[""])[0];
+  const fonts=(t.match(/4\) الخطوط:[\s\S]*?(?=\n\n5\) ترتيب العناصر:|$)/)||[""])[0];
+  const layout=(t.match(/5\) ترتيب العناصر:[\s\S]*?(?=\n\n6\) الكوبي المقترح:|$)/)||[""])[0];
+  const copy=(t.match(/6\) الكوبي المقترح:[\s\S]*?(?=\n\n7\) التنفيذ:|$)/)||[""])[0];
+  const execution=(t.match(/7\) التنفيذ:[\s\S]*$/)||[""])[0];
+
+  if(!/#(?:[0-9A-Fa-f]{6})\b/.test(colors)) return true;
+  if(!/[-—].+[-—].+/.test(fonts)) return true;
+  if((layout.match(/(^|\n)-/g)||[]).length<2) return true;
+  if(copy.replace(/6\) الكوبي المقترح:/,"").trim().length<8) return true;
+  if(execution.replace(/7\) التنفيذ:/,"").trim().length<20) return true;
+  return false;
+}
 function chatMessages(incoming){
   const valid=(Array.isArray(incoming)?incoming:[])
     .filter(m=>m&&(m.role==="user"||m.role==="assistant")&&typeof m.content==="string")
@@ -112,19 +133,30 @@ async function handleAssistant(request,env){
     if(!idea) return json({error:"Missing design idea",trialMode:TRIAL_MODE},400);
 
     const system=[
-      "أنت Creative Director محترف داخل Graphic Fiction AI، ومهمتك إعطاء خطة تصميم عملية يستطيع المصمم تنفيذها فوراً.",
+      "أنت Creative Director محترف داخل Graphic Fiction AI. مهمتك تحويل طلب العميل إلى خطة تصميم عملية ودقيقة، وليس كتابة كلام عام.",
       "اللغة: العربية المصرية الطبيعية. استخدم English فقط لأسماء الخطوط أو المصطلحات التصميمية الضرورية.",
-      "ممنوع التكرار والحشو واختراع معلومات عن البراند، وممنوع كلمات غير مفهومة أو ترجمات آلية غريبة.",
-      "مهم جداً: لا تستخدم عناوين مثل النادي أو التأشيرة أو تقدير الذات أو أي كلمات لا علاقة لها بالتصميم. استخدم فقط: الفكرة، الستايل، الألوان، الخطوط، ترتيب العناصر، الكوبي المقترح، التنفيذ.",
-      "لو معلومة غير موجودة، اعمل افتراض تصميمي منطقي واذكره بوضوح كـ(افتراض).",
-      "لا تقل إن البراند فاخر أو عالمي أو صحي أو غير ذلك إلا إذا ذكره المستخدم.",
-      "الألوان لازم تكون محددة بأسماء واضحة وHEX، من 3 إلى 5 ألوان فقط. لا تكرر اللون الأبيض بأكثر من اسم.",
-      "الخطوط: اقترح خطين كحد أقصى مع اسم الخط وحجم تقريبي، ولا تستخدم عبارات مثل خط صحراء أو اسم المدير إذا لم يطلبها المستخدم.",
-      "التكوين لازم يوضح مكان العنصر الرئيسي، العنوان، اللوجو، الكوبي، وCTA، مع مقاسات تقريبية عند الحاجة.",
-      "لو المحتوى بوست سوشيال، اذكر المقاس المناسب مثل 1080×1350 عند الحاجة.",
-      "اكتب إجابة قصيرة لكن مفيدة، بدون مقدمة عامة أو خاتمة تسويقية.",
-      "استخدم هذا الشكل بالضبط، ولا تضف أي قسم آخر: 1) الفكرة 2) الستايل 3) الألوان 4) الخطوط 5) ترتيب العناصر 6) الكوبي المقترح 7) التنفيذ",
-      "في قسم الألوان اكتب كل لون بهذا الشكل: الاسم — HEX. في قسم الخطوط: اسم الخط — الحجم — الاستخدام. في ترتيب العناصر: العنصر — المكان — الحجم/النسبة. في الكوبي: اكتب نصوصاً عربية طبيعية وقصيرة فقط."
+      "ممنوع اختراع معلومات عن البراند أو النشاط أو الجمهور. لو معلومة ناقصة، اكتب (افتراض) فقط عند الحاجة.",
+      "ممنوع أي ترجمة حرفية أو كلمات غريبة. لا تستخدم كلمات مثل النادي أو التأشيرة أو تقدير الذات أو الالتزام كعناوين.",
+      "يجب إخراج 7 أقسام فقط وبنفس الترتيب والعناوين التالية حرفياً.",
+      "1) الفكرة: فكرة بصرية محددة مرتبطة مباشرة بطلب العميل.",
+      "2) الستايل: وصف بصري واضح للمعالجة والإضاءة والخلفية والجو العام.",
+      "3) الألوان: من 3 إلى 5 ألوان. كل سطر بهذا الشكل: - الاسم — #HEX. لا تضع أي شيء آخر في هذا القسم.",
+      "4) الخطوط: خطان كحد أقصى. كل سطر بهذا الشكل: - اسم الخط — الحجم — الاستخدام.",
+      "5) ترتيب العناصر: 3 إلى 5 عناصر على الأقل. كل سطر بهذا الشكل: - العنصر — المكان — الحجم/النسبة.",
+      "6) الكوبي المقترح: اكتب 1 إلى 3 جمل قصيرة طبيعية تصلح فعلاً للإعلان. لا تكتب شرحاً للكوبي.",
+      "7) التنفيذ: خطوات تنفيذ عملية من 3 إلى 5 نقاط تبدأ بأفعال واضحة مثل: ضع، استخدم، أضف، حافظ، صدّر.",
+      "لو المشروع بوست Instagram، استخدم 1080×1350 ما لم يطلب المستخدم مقاساً آخر.",
+      "في ترتيب العناصر، اذكر العنصر الرئيسي والعنوان واللوجو والكوبي وCTA إذا كانت مناسبة.",
+      "في التنفيذ، لا تعيد قائمة الألوان أو الخطوط فقط؛ اشرح كيف ينفذ المصمم التصميم فعلياً.",
+      "مثال صحيح:",
+      "1) الفكرة: برجر FRYLO في لقطة قريبة مع إحساس شهي وتركيز بصري على المنتج.",
+      "2) الستايل: سينمائي، إضاءة جانبية قوية، خلفية داكنة ونظيفة، وعمق مجال ضحل.",
+      "3) الألوان: - أصفر دافئ — #FFC107\\n- وردي — #FF69B4\\n- كريمي — #FFF3D6",
+      "4) الخطوط: - Montserrat Bold — 64px — العنوان\\n- Lato Regular — 28px — الكوبي",
+      "5) ترتيب العناصر: - البرجر — المنتصف — 55% من مساحة التصميم\\n- العنوان — أعلى اليسار — 25%\\n- اللوجو — أعلى اليمين — 10%\\n- CTA — أسفل اليسار — 15%",
+      "6) الكوبي المقترح: عضة واحدة... وهتطلبه تاني.\\nجرّب FRYLO النهارده.",
+      "7) التنفيذ: - ضع صورة البرجر في المنتصف.\\n- أضف إضاءة جانبية وحافة ضوء خفيفة.\\n- استخدم العنوان بخط ثقيل مع تباين واضح.\\n- أضف اللوجو والـCTA بدون تزاحم.\\n- صدّر التصميم 1080×1350 بجودة عالية.",
+      "لا تضف مقدمة أو خاتمة أو عنوان Markdown. أخرج الأقسام السبعة فقط."
     ].join("\n");
 
     const userPrompt=[
@@ -135,12 +167,35 @@ async function handleAssistant(request,env){
       "حوّل الطلب لخطة تصميم محددة وقابلة للتنفيذ. لا تضف معلومات غير مذكورة عن النشاط أو البراند."
     ].join("\n");
 
-    const result=await runText(env,[
+    let result=await runText(env,[
       {role:"system",content:system},
       {role:"user",content:userPrompt}
-    ],420);
+    ],500,{temperature:0.10,top_p:0.70});
 
-    const normalized=normalizeAssistantOutput(result);
+    let normalized=normalizeAssistantOutput(result);
+
+    if(designAssistantNeedsRepair(normalized)){
+      const repairPrompt=[
+        "أعد كتابة الإجابة السابقة من الصفر وفق القالب الإجباري.",
+        "لا تشرح الخطأ ولا تعتذر.",
+        "كل قسم يجب أن يحتوي على نوع المعلومات الخاص به فقط.",
+        "الألوان = أسماء + HEX فقط.",
+        "الخطوط = اسم + حجم + استخدام.",
+        "ترتيب العناصر = عنصر + مكان + نسبة/حجم.",
+        "الكوبي = نص إعلاني حقيقي قصير.",
+        "التنفيذ = خطوات عملية، وليس ألواناً أو كلمات مفردة.",
+        "",
+        "الإجابة السابقة:",
+        normalized
+      ].join("\n");
+
+      result=await runText(env,[
+        {role:"system",content:system},
+        {role:"user",content:repairPrompt}
+      ],500,{temperature:0.05,top_p:0.65});
+      normalized=normalizeAssistantOutput(result);
+    }
+
     return json({text:normalized,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
   }catch(error){
     console.error("assistant",error);
