@@ -140,7 +140,8 @@ async function handleAssistant(request,env){
       {role:"user",content:userPrompt}
     ],420);
 
-    return json({text:result,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
+    const normalized=normalizeAssistantOutput(result);
+    return json({text:normalized,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
   }catch(error){
     console.error("assistant",error);
     return json({error:"مساعد التصميم حصل فيه عطل مؤقت. جرّب تاني.",details:clean(error?.message||error,220),retryable:true,trialMode:TRIAL_MODE},503);
