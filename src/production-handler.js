@@ -3,6 +3,7 @@ import legacyHandler from "./index.js";
 const TRIAL_MODE = true;
 const TRIAL_MODE_NOTICE = "Graphic Fiction AI is currently in free beta/trial mode. No subscription or payment check is required.";
 const TEXT_MODEL = "@cf/zai-org/glm-4.7-flash";
+const ENHANCE_MODEL = "@cf/bytedance/stable-diffusion-xl-lightning";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -10,114 +11,87 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, X-GFA-Client-ID"
 };
 
-function json(data, status = 200, extra = {}) {
+function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json; charset=utf-8", ...extra }
+    headers: { ...CORS, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
   });
 }
 
-function cleanText(value, max) {
+function clean(value, max = 4000) {
   return String(value ?? "").replace(/\u0000/g, "").trim().slice(0, max);
 }
 
-function getText(result) {
-  return String(
-    result?.response ??
-    result?.choices?.[0]?.message?.content ??
-    result?.choices?.[0]?.text ??
-    result?.result?.response ??
-    ""
-  ).trim();
+function modelText(result) {
+  return String(result?.response ?? result?.choices?.[0]?.message?.content ?? result?.choices?.[0]?.text ?? result?.result?.response ?? "").trim();
 }
 
-async function runText(env, messages, options = {}) {
-  const maxTokens = Math.max(256, Math.min(options.maxTokens ?? 760, 1200));
-  const temperature = options.temperature ?? 0.55;
-  let lastError;
+function transientError(error) {
+  return /timeout|timed out|aborted|capacity|busy|429|408|temporar|unavailable|overloaded/i.test(String(error?.message || error || ""));
+}
 
+async function runText(env, messages, maxCompletionTokens = 480, temperature = 0.45) {
+  let lastError;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const result = await env.AI.run(TEXT_MODEL, {
         messages,
-        max_tokens: maxTokens,
-        max_completion_tokens: maxTokens,
+        max_completion_tokens: maxCompletionTokens,
         temperature
       });
-      const text = getText(result);
+      const text = modelText(result);
       if (!text) throw new Error("The AI returned an empty response.");
       return text;
-    } catch (err) {
-      lastError = err;
-      const message = String(err?.message || err || "");
-      const transient = /timeout|aborted|capacity|busy|429|408|temporar|unavailable/i.test(message);
-      if (!transient || attempt === 1) break;
-      await new Promise(resolve => setTimeout(resolve, 250));
+    } catch (error) {
+      lastError = error;
+      if (!transientError(error) || attempt === 1) break;
+      await new Promise(resolve => setTimeout(resolve, 120));
     }
   }
-
   throw lastError || new Error("AI request failed.");
 }
 
-function buildChatMessages(incoming) {
-  const cleaned = incoming
+function chatMessages(incoming) {
+  const valid = (Array.isArray(incoming) ? incoming : [])
     .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-    .map(m => ({ role: m.role, content: cleanText(m.content, 3500) }))
-    .filter(m => m.content);
+    .map(m => ({ role: m.role, content: clean(m.content, 2200) }))
+    .filter(m => m.content)
+    .slice(-6);
 
-  // Keep enough recent context for continuity without sending a huge transcript on every turn.
-  const recent = cleaned.slice(-10);
   let total = 0;
   const kept = [];
-  for (let i = recent.length - 1; i >= 0; i--) {
-    const size = recent[i].content.length;
-    if (total + size > 14000 && kept.length >= 2) break;
-    kept.unshift(recent[i]);
-    total += size;
+  for (let i = valid.length - 1; i >= 0; i--) {
+    if (total + valid[i].content.length > 8000 && kept.length >= 2) break;
+    kept.unshift(valid[i]);
+    total += valid[i].content.length;
   }
   return kept;
 }
 
 async function handleChat(request, env) {
   let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "Invalid JSON request.", trialMode: TRIAL_MODE }, 400);
-  }
+  try { body = await request.json(); }
+  catch { return json({ error: "Invalid JSON request.", trialMode: TRIAL_MODE }, 400); }
 
-  const messages = buildChatMessages(Array.isArray(body?.messages) ? body.messages : []);
+  const messages = chatMessages(body?.messages);
   if (!messages.length) return json({ error: "Missing messages", trialMode: TRIAL_MODE }, 400);
 
   const system = [
-    "You are Graphic Fiction AI, the built-in creative AI assistant for designers.",
-    "Egyptian Arabic (Masri) is the default conversational dialect and should sound natural, friendly, and professional.",
-    "If the user writes in another language, answer in that language. Do not mix languages unless requested.",
-    "You help with graphic design, branding, prompts, image generation ideas, image editing, typography, color, creative direction, marketing copy, and general questions.",
-    "Give practical answers and ready-to-use prompts when useful.",
-    "Never claim to be human. Never pretend that chat itself generated an image; direct image requests to the Image Studio workflow.",
-    "Keep normal answers concise. Use short sections or bullets when they improve clarity.",
-    "If the user asks a follow-up, use the recent conversation context rather than restarting the topic."
+    "أنت Graphic Fiction AI، المساعد الذكي الأساسي للمصممين وصنّاع المحتوى.",
+    "اللغة الافتراضية هي العربية المصرية الطبيعية، بأسلوب مصري واضح واحترافي وودود. لا تستخدم الفصحى إلا لو كانت مطلوبة.",
+    "لو المستخدم كتب بلغة أخرى، رد بنفس اللغة. لا تخلط لغات بدون طلب.",
+    "ساعد في التصميم الجرافيكي، البراندنج، اللوجوهات، البرومبتات، توليد وتعديل الصور، الألوان، الخطوط، التكوين، التسويق والكتابة الإبداعية.",
+    "قدّم إجابة مباشرة وقصيرة أولاً، ثم التفاصيل الضرورية فقط. استخدم نقاطاً عند الحاجة.",
+    "لو الطلب خاص بتوليد صورة، وجّه المستخدم لاستخدام Image Studio بدل الادعاء أن المحادثة ولّدت صورة.",
+    "حافظ على سياق آخر رسائل ولا تعيد بداية الموضوع من الصفر."
   ].join(" ");
 
   try {
-    const text = await runText(env, [{ role: "system", content: system }, ...messages], {
-      maxTokens: 760,
-      temperature: 0.55
-    });
-    return json({
-      text,
-      trialMode: TRIAL_MODE,
-      trialNotice: TRIAL_MODE_NOTICE
-    }, 200, { "Cache-Control": "no-store" });
-  } catch (err) {
-    console.error("Production chat error:", err);
-    return json({
-      error: "Chat is temporarily unavailable. Please try again.",
-      details: cleanText(err?.message || err, 300),
-      trialMode: TRIAL_MODE,
-      retryable: true
-    }, 503);
+    const text = await runText(env, [{ role: "system", content: system }, ...messages], 480, 0.45);
+    return json({ text, trialMode: TRIAL_MODE, trialNotice: TRIAL_MODE_NOTICE });
+  } catch (error) {
+    console.error("Chat error:", error);
+    return json({ error: "الدردشة مش متاحة مؤقتاً. جرّب تاني.", details: clean(error?.message || error, 240), trialMode: TRIAL_MODE, retryable: true }, 503);
   }
 }
 
@@ -126,80 +100,70 @@ async function handleDesignAssistant(request, env) {
   try { body = await request.json(); }
   catch { return json({ error: "Invalid JSON request.", trialMode: TRIAL_MODE }, 400); }
 
-  const type = cleanText(body?.type || "Brand", 80);
-  const idea = cleanText(body?.idea, 900);
-  const tone = cleanText(body?.tone || "Modern", 80);
+  const type = clean(body?.type || "Brand", 60);
+  const idea = clean(body?.idea, 700);
+  const tone = clean(body?.tone || "Modern", 60);
   if (!idea) return json({ error: "Missing design idea", trialMode: TRIAL_MODE }, 400);
 
   const system = [
-    "You are Graphic Fiction AI, a senior creative director for graphic designers.",
-    "Detect the user's language and answer completely in that language unless a different output language is explicitly requested.",
-    "Return practical, production-ready direction without inventing brand facts.",
-    "Use these concise sections: Creative Direction, Visual Style, Color Palette, Typography, Layout & Composition, Imagery, Copy Direction, Production Notes.",
-    "Translate section headings naturally into the response language."
+    "أنت Graphic Fiction AI، Creative Director محترف للمصممين.",
+    "العربية المصرية هي اللغة الافتراضية. اكتب بالمصري الطبيعي والواضح إلا إذا طلب المستخدم لغة أخرى صراحة.",
+    "حوّل الفكرة إلى توجيه تصميم قابل للتنفيذ فوراً.",
+    "استخدم عناوين قصيرة: الاتجاه الإبداعي، الستايل البصري، الألوان، الخطوط، التكوين، الصور، الكوبي، ملاحظات التنفيذ.",
+    "لا تخترع معلومات عن البراند غير موجودة في الطلب."
   ].join(" ");
 
-  const user = `Create a design concept for a ${type} project. Idea: ${idea}. Tone: ${tone}. Focus on actionable visual direction a graphic designer can execute.`;
   try {
     const text = await runText(env, [
       { role: "system", content: system },
-      { role: "user", content: user }
-    ], { maxTokens: 700, temperature: 0.55 });
-    return json({ text, trialMode: TRIAL_MODE, trialNotice: TRIAL_MODE_NOTICE }, 200, { "Cache-Control": "no-store" });
-  } catch (err) {
-    console.error("Production design assistant error:", err);
-    return json({ error: "Design assistant is temporarily unavailable. Please try again.", details: cleanText(err?.message || err, 300), trialMode: TRIAL_MODE, retryable: true }, 503);
+      { role: "user", content: `نوع المشروع: ${type}\nالفكرة: ${idea}\nالتون: ${tone}\nاعمل Concept احترافي ومختصر يقدر المصمم ينفذه.` }
+    ], 520, 0.45);
+    return json({ text, trialMode: TRIAL_MODE, trialNotice: TRIAL_MODE_NOTICE });
+  } catch (error) {
+    console.error("Design assistant error:", error);
+    return json({ error: "مساعد التصميم مش متاح مؤقتاً. جرّب تاني.", details: clean(error?.message || error, 240), trialMode: TRIAL_MODE, retryable: true }, 503);
   }
 }
 
-function binaryToBase64(bytes) {
-  let binary = "";
+function base64Bytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function bytesBase64(bytes) {
+  let out = "";
   const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
-  }
-  return btoa(binary);
+  for (let i = 0; i < bytes.length; i += chunk) out += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+  return btoa(out);
 }
 
-function readJpegSize(bytes) {
-  let i = 2;
-  while (i + 9 < bytes.length) {
-    if (bytes[i] !== 0xff) { i++; continue; }
-    const marker = bytes[i + 1];
-    const len = (bytes[i + 2] << 8) | bytes[i + 3];
-    if (marker >= 0xc0 && marker <= 0xc3 && i + 8 < bytes.length) {
-      return { width: (bytes[i + 7] << 8) | bytes[i + 8], height: (bytes[i + 5] << 8) | bytes[i + 6] };
-    }
-    if (!len || len < 2) break;
-    i += 2 + len;
-  }
-  return { width: 1024, height: 1024 };
-}
-
-function getImageSize(binary) {
+function imageSize(binary) {
   const b = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) b[i] = binary.charCodeAt(i);
   if (b.length >= 24 && b[0] === 137 && b[1] === 80 && b[2] === 78 && b[3] === 71) {
     return { width: (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19], height: (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23] };
   }
-  if (b.length >= 4 && b[0] === 255 && b[1] === 216) return readJpegSize(b);
+  if (b.length >= 4 && b[0] === 255 && b[1] === 216) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 255) { i++; continue; }
+      const marker = b[i + 1];
+      const len = (b[i + 2] << 8) | b[i + 3];
+      if (marker >= 0xc0 && marker <= 0xc3 && i + 8 < b.length) return { width: (b[i + 7] << 8) | b[i + 8], height: (b[i + 5] << 8) | b[i + 6] };
+      if (len < 2) break;
+      i += 2 + len;
+    }
+  }
   return { width: 1024, height: 1024 };
 }
 
-async function streamToBytes(stream) {
-  if (stream instanceof ReadableStream) return new Uint8Array(await new Response(stream).arrayBuffer());
-  if (stream?.image instanceof ReadableStream) return new Uint8Array(await new Response(stream.image).arrayBuffer());
-  if (stream?.image) {
-    if (typeof stream.image === "string") {
-      const clean = stream.image.replace(/^data:image\/[^;]+;base64,/, "");
-      const binary = atob(clean);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return bytes;
-    }
-    return new Uint8Array(stream.image);
-  }
-  throw new Error("The AI enhancer returned no image.");
+async function outputBytes(result) {
+  if (result instanceof ReadableStream) return new Uint8Array(await new Response(result).arrayBuffer());
+  if (result?.image instanceof ReadableStream) return new Uint8Array(await new Response(result.image).arrayBuffer());
+  if (result?.image) return typeof result.image === "string" ? base64Bytes(result.image.replace(/^data:image\/[^;]+;base64,/, "")) : new Uint8Array(result.image);
+  throw new Error("The image model returned no image.");
 }
 
 async function handleImageEnhance(request, env) {
@@ -207,7 +171,7 @@ async function handleImageEnhance(request, env) {
   try { body = await request.json(); }
   catch { return json({ error: "Invalid JSON request.", trialMode: TRIAL_MODE }, 400); }
 
-  const dataUrl = cleanText(body?.image, 18 * 1024 * 1024);
+  const dataUrl = clean(body?.image, 14 * 1024 * 1024);
   const mode = Math.max(0, Math.min(7, Number(body?.mode ?? 0)));
   if (!dataUrl.startsWith("data:image/")) return json({ error: "Please upload a valid image.", trialMode: TRIAL_MODE }, 400);
 
@@ -216,49 +180,44 @@ async function handleImageEnhance(request, env) {
   const imageBase64 = match[1];
   let binary;
   try { binary = atob(imageBase64); } catch { return json({ error: "Invalid base64 image.", trialMode: TRIAL_MODE }, 400); }
-  if (binary.length > 10 * 1024 * 1024) return json({ error: "Image is too large. Maximum input is 10 MB.", trialMode: TRIAL_MODE }, 413);
+  if (binary.length > 8 * 1024 * 1024) return json({ error: "الصورة كبيرة جداً. الحد الأقصى 8MB.", trialMode: TRIAL_MODE }, 413);
 
-  const original = getImageSize(binary);
+  const original = imageSize(binary);
   const ow = Math.max(256, Number(original.width) || 1024);
   const oh = Math.max(256, Number(original.height) || 1024);
-  const scale = Math.min(1, 1536 / ow, 1536 / oh);
+  const scale = Math.min(1, 1024 / ow, 1024 / oh);
   const width = Math.max(256, Math.round((ow * scale) / 8) * 8);
   const height = Math.max(256, Math.round((oh * scale) / 8) * 8);
 
-  let strength = 0.16;
-  let steps = 8;
-  let prompt = "enhance this exact image, restore fine detail, improve clarity and lighting naturally, preserve the exact subject, face, identity, body proportions, composition, colors and objects, photorealistic, do not redesign or add objects";
-  if (mode === 1) { strength = 0.12; steps = 6; }
-  else if (mode === 2) { strength = 0.16; steps = 8; }
-  else if (mode === 3) { strength = 0.20; steps = 10; prompt += ", stronger detail recovery"; }
-  else if (mode === 4) { strength = 0.17; steps = 8; prompt += ", crisp professional detail"; }
-  else if (mode === 5) { strength = 0.10; steps = 6; prompt += ", preserve natural skin and facial identity with minimal change"; }
-  else if (mode === 6) { strength = 0.14; steps = 7; prompt += ", cleaner product edges and material texture"; }
-  else if (mode === 7) { strength = 0.18; steps = 9; prompt += ", stronger recovery while keeping the original recognizable"; }
+  const profiles = [
+    { strength: 0.12, prompt: "restore clarity and fine detail naturally" },
+    { strength: 0.10, prompt: "lightly clean compression and improve clarity" },
+    { strength: 0.14, prompt: "recover detail and improve sharpness naturally" },
+    { strength: 0.18, prompt: "strong detail recovery while preserving the original" },
+    { strength: 0.14, prompt: "create crisp professional detail" },
+    { strength: 0.08, prompt: "gently improve portrait clarity and natural skin detail" },
+    { strength: 0.11, prompt: "clean product edges and material texture" },
+    { strength: 0.16, prompt: "stronger clarity and detail recovery" }
+  ];
+  const profile = profiles[mode];
 
   try {
-    const result = await env.AI.run("@cf/stabilityai/stable-diffusion-xl-base-1.0", {
-      prompt,
-      negative_prompt: "changed face, changed identity, different person, distorted body, extra fingers, extra limbs, new objects, text, watermark, logo changes, cartoon, painting, oversaturated, blurry, low quality",
+    const result = await env.AI.run(ENHANCE_MODEL, {
+      prompt: `Enhance this exact image. ${profile.prompt}. Preserve the exact person, face, identity, body proportions, pose, composition, colors, objects, clothing and background. Do not redesign the image. Photorealistic natural result.`,
+      negative_prompt: "changed identity, different person, changed face, altered facial features, changed body proportions, long neck, oversized head, distorted hands, extra fingers, extra limbs, new objects, text, watermark, cartoon, painting, oversaturated, blurry",
       image_b64: imageBase64,
       width,
       height,
-      num_steps: steps,
-      strength,
-      guidance: 6.5
+      num_steps: 4,
+      strength: profile.strength,
+      guidance: 5.5
     });
-    const outputBytes = await streamToBytes(result);
-    return json({
-      image: "data:image/png;base64," + binaryToBase64(outputBytes),
-      width,
-      height,
-      mode,
-      trialMode: TRIAL_MODE,
-      trialNotice: TRIAL_MODE_NOTICE
-    }, 200, { "Cache-Control": "no-store" });
-  } catch (err) {
-    console.error("Production image enhance error:", err);
-    return json({ error: "Image enhancement is temporarily unavailable. Please try again.", details: cleanText(err?.message || err, 300), trialMode: TRIAL_MODE, retryable: true }, 503);
+
+    const output = await outputBytes(result);
+    return json({ image: "data:image/png;base64," + bytesBase64(output), width, height, mode, trialMode: TRIAL_MODE, trialNotice: TRIAL_MODE_NOTICE });
+  } catch (error) {
+    console.error("Image enhancement error:", error);
+    return json({ error: "تحسين الصورة فشل مؤقتاً. جرّب صورة أصغر أو جرّب تاني.", details: clean(error?.message || error, 300), trialMode: TRIAL_MODE, retryable: true }, 503);
   }
 }
 
@@ -268,15 +227,13 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
 
     if (url.pathname === "/api/health" && request.method === "GET") {
-      return json({ ok: true, service: "Graphic Fiction AI", trialMode: TRIAL_MODE, timestamp: new Date().toISOString() }, 200, { "Cache-Control": "no-store" });
+      return json({ ok: true, service: "Graphic Fiction AI", trialMode: TRIAL_MODE, timestamp: new Date().toISOString() });
     }
 
     if (url.pathname === "/api/chat" && request.method === "POST") return handleChat(request, env);
     if (url.pathname === "/api/design-assistant" && request.method === "POST") return handleDesignAssistant(request, env);
     if (url.pathname === "/api/image-enhance" && request.method === "POST") return handleImageEnhance(request, env);
 
-    // Preserve every existing route and UI exactly as built; only the reliability-sensitive
-    // endpoints above are replaced by the production layer.
     return legacyHandler.fetch(request, env, ctx);
   }
 };
