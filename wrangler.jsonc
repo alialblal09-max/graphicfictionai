@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "graphicfictionai",
-  "main": "src/index.js",
+  "main": "src/production-handler.js",
   "compatibility_date": "2026-10-03",
   "assets": {
     "directory": "./public",
