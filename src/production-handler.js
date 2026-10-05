@@ -30,6 +30,46 @@ async function runText(env,messages,maxTokens=256){
   if(!text) throw new Error("AI returned an empty response.");
   return text;
 }
+function normalizeAssistantOutput(text){
+  const canonical = [
+    "1) الفكرة:",
+    "2) الستايل:",
+    "3) الألوان:",
+    "4) الخطوط:",
+    "5) ترتيب العناصر:",
+    "6) الكوبي المقترح:",
+    "7) التنفيذ:"
+  ];
+  const badHeadings = {
+    "النادي":"الألوان",
+    "التأشيرة":"الخطوط",
+    "تقدير الذات":"ترتيب العناصر",
+    "الشروط المقترحة":"الكوبي المقترح",
+    "الالتزام":"التنفيذ"
+  };
+  let out = String(text ?? "").replace(/\r\n/g, "\n");
+
+  out = out.replace(/^(\s*(?:#{1,3}\s*)?\d+[.)]\s*)([^\n:]+)(\s*:)/gm, (match, prefix, heading, colon) => {
+    const key = heading.trim();
+    return prefix + (badHeadings[key] || heading.trim()) + colon;
+  });
+
+  let seen = 0;
+  out = out.replace(/^\s*(?:#{1,3}\s*)?(\d+)[.)]\s*[^\n:]+\s*:/gm, (match, number) => {
+    const n = Number(number);
+    if (n >= 1 && n <= 7) {
+      seen = Math.max(seen, n);
+      return canonical[n - 1];
+    }
+    if (seen < 7) {
+      seen += 1;
+      return canonical[seen - 1];
+    }
+    return match;
+  });
+  return out.trim();
+}
+
 function chatMessages(incoming){
   const valid=(Array.isArray(incoming)?incoming:[])
     .filter(m=>m&&(m.role==="user"||m.role==="assistant")&&typeof m.content==="string")
@@ -56,7 +96,7 @@ async function handleChat(request,env){
     const messages=chatMessages(body?.messages);
     if(!messages.length) return json({error:"Missing messages",trialMode:TRIAL_MODE},400);
     const result=await runText(env,[{role:"system",content:EGYPTIAN_SYSTEM},...messages],256);
-    return json({text:result,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
+    const normalized=normalizeAssistantOutput(result);\n    return json({text:normalized,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
   }catch(error){
     console.error("chat",error);
     return json({error:"الدردشة حصل فيها عطل مؤقت. جرّب تاني.",details:clean(error?.message||error,220),retryable:true,trialMode:TRIAL_MODE},503);
