@@ -1421,6 +1421,214 @@ async function runAssistant(){
   }
 }
 
+
+
+// ===== Graphic Fiction AI runtime repair: projects + reliable client image handling =====
+(function(){
+  const PROJECTS_KEY="gfa_projects_v2";
+
+  function getProjects(){
+    try{
+      const v=JSON.parse(localStorage.getItem(PROJECTS_KEY)||"[]");
+      return Array.isArray(v)?v:[];
+    }catch(e){return [];}
+  }
+  function putProjects(v){
+    try{localStorage.setItem(PROJECTS_KEY,JSON.stringify(v.slice(0,30)));}catch(e){}
+  }
+  function esc(v){
+    return String(v??"").replace(/[<>&"]/g,s=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[s]));
+  }
+  function saveProject(title,image,type){
+    if(!image || !String(image).startsWith("data:image/")) return;
+    const items=getProjects();
+    const item={id:(crypto?.randomUUID?crypto.randomUUID():"p-"+Date.now()),title:String(title||"Graphic Fiction Project").slice(0,80),type:String(type||"AI"),image,createdAt:new Date().toISOString()};
+    items.unshift(item);
+    putProjects(items);
+    renderProjects();
+  }
+  function deleteProject(id){
+    putProjects(getProjects().filter(p=>p.id!==id));
+    renderProjects();
+    if(typeof showToast==="function") showToast("Project deleted.");
+  }
+  function renderProjects(){
+    const items=getProjects();
+    const card=p=>'<div class="proj-card"><div class="proj-thumb" style="background:#111;"><img src="'+esc(p.image)+'" alt="'+esc(p.title)+'" style="width:100%;height:100%;object-fit:cover;"></div><div class="proj-meta"><h5>'+esc(p.title)+'</h5><span>'+esc(p.type)+' • '+new Date(p.createdAt).toLocaleDateString()+'</span></div><div class="proj-actions"><a class="btn btn-ghost btn-sm" href="'+esc(p.image)+'" download="'+esc(p.title.replace(/[^a-z0-9_-]+/gi,"-"))+'.png">Download</a><button class="btn btn-ghost btn-sm" type="button" onclick="deleteGfaProject(\''+esc(p.id)+'\')">Delete</button></div></div>';
+    const full=document.getElementById("projects-full-grid");
+    const home=document.getElementById("home-projects-preview");
+    if(full){
+      full.innerHTML=items.length?items.map(card).join(""):'<div class="card" style="grid-column:1/-1;padding:28px;text-align:center;color:var(--text-dim);">مفيش مشاريع محفوظة لسه. أي صورة ناجحة هتتحفظ هنا تلقائيًا.</div>';
+    }
+    if(home){
+      home.innerHTML=items.slice(0,4).map(card).join("")||'<div class="card" style="grid-column:1/-1;padding:22px;color:var(--text-dim);">ابدأ بتوليد صورة، وهتظهر هنا تلقائيًا.</div>';
+    }
+  }
+  window.deleteGfaProject=deleteProject;
+  window.renderGfaProjects=renderProjects;
+  window.saveGfaProject=saveProject;
+
+  function fileToData(file,max=1024,quality=.82){
+    return new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onerror=()=>reject(new Error("Could not read image."));
+      reader.onload=()=>{
+        const src=String(reader.result||"");
+        const img=new Image();
+        img.onload=()=>{
+          const scale=Math.min(1,max/img.naturalWidth,max/img.naturalHeight);
+          const w=Math.max(256,Math.round(img.naturalWidth*scale));
+          const h=Math.max(256,Math.round(img.naturalHeight*scale));
+          const c=document.createElement("canvas"); c.width=w;c.height=h;
+          const ctx=c.getContext("2d"); if(!ctx) return reject(new Error("Could not prepare image."));
+          ctx.drawImage(img,0,0,w,h);
+          resolve(c.toDataURL("image/jpeg",quality));
+        };
+        img.onerror=()=>reject(new Error("Could not decode image."));
+        img.src=src;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  window.handleEnhUpload=async function(input){
+    const file=input?.files?.[0];
+    if(!file) return;
+    if(!file.type.startsWith("image/")){showToast("اختار صورة صحيحة.");return;}
+    try{
+      enhancerImageData=await fileToData(file,1024,.82);
+      finishEnhancerUpload();
+    }catch(e){console.error(e);showToast("مش قادر أجهز الصورة. جرّب صورة تانية.");}
+  };
+
+  window.handleUpload=function(input,previewId){
+    const file=input?.files?.[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const raw=String(e.target.result||"");
+      const img=document.getElementById(previewId);
+      if(img){img.src=raw;img.classList.remove("hidden");}
+      if(previewId==="studio-ref-preview"){
+        const source=new Image();
+        source.onload=()=>{
+          const scale=Math.min(1,512/source.naturalWidth,512/source.naturalHeight);
+          const c=document.createElement("canvas");
+          c.width=Math.max(1,Math.round(source.naturalWidth*scale));
+          c.height=Math.max(1,Math.round(source.naturalHeight*scale));
+          const ctx=c.getContext("2d");
+          if(ctx) studioReferenceImageData=c.toDataURL("image/jpeg",.86);
+        };
+        source.src=raw;
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  window.runStudioGenerate=async function(){
+    const promptEl=document.getElementById("studio-prompt");
+    const resultEl=document.getElementById("studio-result");
+    const prompt=(promptEl?.value||"").trim();
+    if(!prompt){showToast("اكتب وصف الصورة الأول.");promptEl?.focus();return;}
+    const button=document.querySelector('#dash-studio button[onclick="runStudioGenerate()"]');
+    if(button){button.disabled=true;button.dataset.originalText=button.textContent;button.textContent="Generating…";}
+    if(resultEl) resultEl.innerHTML='<div class="spellbook-loading"><div class="spinner" style="width:18px;height:18px;margin:0;"></div><span>Generating…</span></div>';
+    try{
+      const response=await fetch("/api/text-to-image",{method:"POST",headers:analyticsHeaders(),body:JSON.stringify({prompt,referenceImage:studioReferenceImageData||""})});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(data.details||data.error||"Generation failed");
+      if(!data.image) throw new Error("AI returned no image.");
+      resultEl.innerHTML='<div class="card" style="padding:14px;"><img src="'+esc(data.image)+'" alt="AI generated result" style="width:100%;border-radius:10px;"><div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"><a class="btn btn-gold btn-sm" href="'+esc(data.image)+'" download="graphic-fiction-ai.jpg">Download</a><button class="btn btn-ghost btn-sm" onclick="saveGfaProject(\'AI Image\',\''+esc(data.image)+'\',\'Image Studio\');showToast(\'Saved to Projects\')">Save to Projects</button></div></div>';
+      saveProject("AI Image",data.image,"Image Studio");
+      logToolUsage("ai-image-studio","text-to-image","success");
+      showToast("الصورة اتعملت واتحفظت في Projects.");
+    }catch(err){
+      console.error(err);
+      resultEl.innerHTML='<div class="card" style="border-color:var(--red);"><strong style="color:var(--red);">Generation failed</strong><p style="margin-top:8px;color:var(--text-dim);">'+esc(err.message||err)+'</p></div>';
+      logToolUsage("ai-image-studio","text-to-image","failed");
+    }finally{
+      if(button){button.disabled=false;button.textContent=button.dataset.originalText||"Generate";}
+    }
+  };
+
+  window.runEnhance=async function(){
+    const resultEl=document.getElementById("enh-result");
+    if(!enhancerImageData){showToast("ارفع صورة الأول.");return;}
+    const button=document.querySelector('#dash-enhancer button[onclick="runEnhance()"]');
+    if(button){button.disabled=true;button.dataset.originalText=button.innerHTML;button.textContent="Enhancing…";}
+    resultEl.innerHTML='<div class="spellbook-loading"><div class="spinner" style="width:18px;height:18px;margin:0;"></div><span>Enhancing…</span></div>';
+    try{
+      const response=await fetch("/api/image-enhance",{method:"POST",headers:analyticsHeaders(),body:JSON.stringify({image:enhancerImageData,mode:enhancerMode})});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(data.details||data.error||"Enhancement failed");
+      if(!data.image) throw new Error("Enhancer returned no image.");
+      resultEl.innerHTML='<div class="card" style="padding:14px;"><div style="display:grid;gap:14px;"><div><div style="font-size:12px;color:var(--text-dim);margin-bottom:7px;">Before</div><img src="'+esc(enhancerImageData)+'" style="width:100%;border-radius:10px;"></div><div><div style="font-size:12px;color:var(--text-dim);margin-bottom:7px;">After</div><img src="'+esc(data.image)+'" style="width:100%;border-radius:10px;"></div></div><div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"><a class="btn btn-gold btn-sm" href="'+esc(data.image)+'" download="graphic-fiction-ai-enhanced.png">Download</a><button class="btn btn-ghost btn-sm" onclick="saveGfaProject(\'Enhanced Image\',\''+esc(data.image)+'\',\'Image Enhancer\');showToast(\'Saved to Projects\')">Save to Projects</button></div></div>';
+      saveProject("Enhanced Image",data.image,"Image Enhancer");
+      logToolUsage("image-enhancer",enhancerMode,"success");
+      showToast("الصورة اتحسنت واتحفظت في Projects.");
+    }catch(err){
+      console.error(err);
+      resultEl.innerHTML='<div class="card" style="border-color:var(--red);"><strong style="color:var(--red);">Enhancement failed</strong><p style="margin-top:8px;color:var(--text-dim);">'+esc(err.message||err)+'</p></div>';
+      logToolUsage("image-enhancer","ai-upscale","failed");
+    }finally{
+      if(button){button.disabled=false;button.innerHTML=button.dataset.originalText||"Enhance";}
+    }
+  };
+
+  window.sendChat=async function(){
+    const input=document.getElementById("chat-input"),button=document.getElementById("chat-send-btn");
+    const value=(input?.value||"").trim(); if(!value)return;
+    chatMessages.push({role:"user",content:value}); input.value=""; renderChat();
+    if(button){button.disabled=true;button.textContent="…";}
+    try{
+      const response=await fetch("/api/chat",{method:"POST",headers:analyticsHeaders(),body:JSON.stringify({messages:chatMessages.slice(-6)})});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(data.details||data.error||"Chat failed");
+      if(!data.text) throw new Error("AI returned no response.");
+      chatMessages.push({role:"assistant",content:String(data.text)});
+      try{localStorage.setItem("gfa_chat_history",JSON.stringify(chatMessages.slice(-20)));}catch(e){}
+      renderChat(); logToolUsage("ai-chat","egyptian-arabic","success");
+    }catch(err){
+      console.error(err);
+      chatMessages.push({role:"assistant",content:"حصل عطل بسيط في الرد. جرّب تاني."}); renderChat();
+      logToolUsage("ai-chat","egyptian-arabic","failed");
+    }finally{if(button){button.disabled=false;button.textContent="Send";}input?.focus();}
+  };
+
+  window.runAssistant=async function(){
+    const type=document.getElementById("assist-type")?.value||"Brand";
+    const idea=(document.getElementById("assist-input")?.value||"").trim();
+    const tone=document.getElementById("assist-tone")?.value||"Modern";
+    const result=document.getElementById("assist-result");
+    if(!idea){showToast("اكتب فكرة التصميم الأول.");return;}
+    const button=document.querySelector('#dash-assistant button[onclick="runAssistant()"]');
+    if(button){button.disabled=true;button.textContent="Generating…";}
+    result.innerHTML='<div class="spellbook-loading" style="margin-top:16px;"><div class="spinner" style="width:18px;height:18px;margin:0;"></div><span>Building concept…</span></div>';
+    try{
+      const response=await fetch("/api/design-assistant",{method:"POST",headers:analyticsHeaders(),body:JSON.stringify({type,idea,tone})});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(data.details||data.error||"Assistant failed");
+      if(!data.text)throw new Error("AI returned no concept.");
+      result.innerHTML='<div class="card" style="margin-top:16px;"><div style="white-space:pre-wrap;line-height:1.65;font-size:13.5px;">'+esc(data.text)+'</div></div>';
+      logToolUsage("design-assistant","egyptian-arabic","success");showToast("الـConcept اتعمل بنجاح.");
+    }catch(err){
+      console.error(err);
+      result.innerHTML='<div class="card" style="margin-top:16px;border-color:var(--red);"><strong style="color:var(--red);">Assistant failed</strong><p style="margin-top:8px;color:var(--text-dim);">'+esc(err.message||err)+'</p></div>';
+      logToolUsage("design-assistant","egyptian-arabic","failed");
+    }finally{if(button){button.disabled=false;button.textContent="Generate Concept";}}
+  };
+
+  const oldSwitchDash=window.switchDash;
+  window.switchDash=function(page){
+    oldSwitchDash(page);
+    if(page==="projects"||page==="home") renderProjects();
+  };
+
+  window.addEventListener("load",function(){
+    renderProjects();
+    if(typeof loadChatHistory==="function") loadChatHistory();
+  });
+})();
+
 </script>
 </body>
 </html>
