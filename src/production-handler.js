@@ -96,7 +96,7 @@ async function handleChat(request,env){
     const messages=chatMessages(body?.messages);
     if(!messages.length) return json({error:"Missing messages",trialMode:TRIAL_MODE},400);
     const result=await runText(env,[{role:"system",content:EGYPTIAN_SYSTEM},...messages],256);
-    const normalized=normalizeAssistantOutput(result);\n    return json({text:normalized,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
+    return json({text:result,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
   }catch(error){
     console.error("chat",error);
     return json({error:"الدردشة حصل فيها عطل مؤقت. جرّب تاني.",details:clean(error?.message||error,220),retryable:true,trialMode:TRIAL_MODE},503);
