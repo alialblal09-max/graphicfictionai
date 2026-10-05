@@ -67,20 +67,37 @@ async function handleAssistant(request,env){
   try{
     const body=await request.json();
     const type=clean(body?.type||"Brand",50);
-    const idea=clean(body?.idea,600);
-    const tone=clean(body?.tone||"Modern",50);
+    const idea=clean(body?.idea,900);
+    const tone=clean(body?.tone||"Modern",80);
     if(!idea) return json({error:"Missing design idea",trialMode:TRIAL_MODE},400);
+
     const system=[
-      "أنت Creative Director داخل Graphic Fiction AI.",
-      "اكتب بالعربية المصرية بشكل افتراضي، مختصر وعملي.",
-      "حوّل الفكرة إلى Concept قابل للتنفيذ فوراً.",
-      "رتب الرد بعناوين: الاتجاه، الستايل، الألوان، الخطوط، التكوين، الصور، الكوبي، التنفيذ.",
-      "لا تخترع معلومات غير موجودة."
-    ].join(" ");
+      "أنت Creative Director محترف داخل Graphic Fiction AI، ومهمتك إعطاء خطة تصميم عملية يستطيع المصمم تنفيذها فوراً.",
+      "اللغة: العربية المصرية الطبيعية. استخدم English فقط لأسماء الخطوط أو المصطلحات التصميمية الضرورية.",
+      "ممنوع التكرار والحشو واختراع معلومات عن البراند، وممنوع كلمات غير مفهومة مثل styyl.",
+      "لو معلومة غير موجودة، اعمل افتراض تصميمي منطقي واذكره بوضوح كـ(افتراض).",
+      "لا تقل إن البراند فاخر أو عالمي أو صحي أو غير ذلك إلا إذا ذكره المستخدم.",
+      "الألوان لازم تكون محددة بأسماء واضحة وHEX، من 3 إلى 5 ألوان فقط.",
+      "الخطوط: اقترح خطين كحد أقصى مع سبب قصير.",
+      "التكوين لازم يوضح مكان العنصر الرئيسي، العنوان، اللوجو، الكوبي، وCTA.",
+      "لو المحتوى بوست سوشيال، اذكر المقاس المناسب مثل 1080×1350 عند الحاجة.",
+      "اكتب إجابة قصيرة لكن مفيدة، بدون مقدمة عامة أو خاتمة تسويقية.",
+      "استخدم هذا الشكل بالضبط: 1) الفكرة 2) الستايل 3) الألوان 4) الخطوط 5) ترتيب العناصر 6) الكوبي المقترح 7) التنفيذ"
+    ].join("\n");
+
+    const userPrompt=[
+      "نوع المشروع: "+type,
+      "الفكرة/طلب العميل: "+idea,
+      "التون المطلوب: "+tone,
+      "",
+      "حوّل الطلب لخطة تصميم محددة وقابلة للتنفيذ. لا تضف معلومات غير مذكورة عن النشاط أو البراند."
+    ].join("\n");
+
     const result=await runText(env,[
       {role:"system",content:system},
-      {role:"user",content:"نوع المشروع: "+type+"\nالفكرة: "+idea+"\nالتون: "+tone}
-    ],320);
+      {role:"user",content:userPrompt}
+    ],420);
+
     return json({text:result,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
   }catch(error){
     console.error("assistant",error);
