@@ -3,6 +3,7 @@ import legacyHandler from "./index.js";
 const TRIAL_MODE = true;
 const TRIAL_MODE_NOTICE = "Graphic Fiction AI is currently in free beta/trial mode.";
 const TEXT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
+const DESIGN_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const ENHANCE_MODEL = "@cf/runwayml/stable-diffusion-v1-5-img2img";
 
 const CORS = {
@@ -25,70 +26,79 @@ async function withTimeout(p,ms){
   finally { clearTimeout(timer); }
 }
 async function runText(env,messages,maxTokens=256,options={}){
-  const result=await withTimeout(env.AI.run(TEXT_MODEL,{messages,max_tokens:maxTokens,temperature:options.temperature??0.35,top_p:options.top_p??0.85}),12000);
+  const model=options.model||TEXT_MODEL;
+  const timeout=options.timeout??12000;
+  const result=await withTimeout(env.AI.run(model,{
+    messages,
+    max_tokens:maxTokens,
+    temperature:options.temperature??0.35,
+    top_p:options.top_p??0.85,
+    ...(options.response_format?{response_format:options.response_format}: {})
+  }),timeout);
   const text=textOf(result);
   if(!text) throw new Error("AI returned an empty response.");
   return text;
 }
-function normalizeAssistantOutput(text){
-  const canonical=[
-    "1) الفكرة:",
-    "2) الستايل:",
-    "3) الألوان:",
-    "4) الخطوط:",
-    "5) ترتيب العناصر:",
-    "6) الكوبي المقترح:",
-    "7) التنفيذ:"
-  ];
-  const badHeadings={
-    "النادي":"الألوان",
-    "التأشيرة":"الخطوط",
-    "تقدير الذات":"ترتيب العناصر",
-    "الشروط المقترحة":"الكوبي المقترح",
-    "الالتزام":"التنفيذ"
-  };
+const DESIGN_SCHEMA={
+  type:"object",
+  properties:{
+    idea:{type:"string"},
+    style:{type:"string"},
+    colors:{type:"array",minItems:3,maxItems:5,items:{type:"string"}},
+    fonts:{type:"array",minItems:1,maxItems:2,items:{type:"string"}},
+    layout:{type:"array",minItems:3,maxItems:5,items:{type:"string"}},
+    copy:{type:"string"},
+    execution:{type:"array",minItems:3,maxItems:5,items:{type:"string"}}
+  },
+  required:["idea","style","colors","fonts","layout","copy","execution"],
+  additionalProperties:false
+};
 
-  let out=String(text??"").replace(/\r\n/g,"\n").trim();
-
-  out=out.replace(/^(\s*(?:#{1,3}\s*)?\d+[.)]\s*)([^\n:]+)(\s*:)/gm,
-    (match,prefix,heading,colon)=>{
-      const key=heading.trim();
-      return prefix+(badHeadings[key]||heading.trim())+colon;
-    });
-
-  const matches=[...out.matchAll(/^\s*(?:#{1,3}\s*)?(\d+)[.)]\s*[^\n:]+\s*:\s*([\s\S]*?)(?=^\s*(?:#{1,3}\s*)?\d+[.)]\s*[^\n:]+\s*:|$)/gmi)];
-  const sections={};
-  for(const m of matches){
-    const n=Number(m[1]);
-    if(n>=1&&n<=7) sections[n]=m[2].trim();
-  }
-
-  const cleanSection=(value)=>String(value||"")
-    .replace(/^[-*]\s*/gm,"- ")
-    .replace(/\n{3,}/g,"\n\n")
-    .trim();
-
-  return canonical.map((heading,i)=>{
-    const body=cleanSection(sections[i+1]);
-    return heading+"\n"+(body||"—");
-  }).join("\n\n").trim();
+function parseJsonObject(text){
+  const raw=String(text||"").trim().replace(/^```json\s*/i,"").replace(/^```\s*/,"").replace(/\s*```$/,"").trim();
+  try{return JSON.parse(raw);}catch{}
+  const first=raw.indexOf("{"), last=raw.lastIndexOf("}");
+  if(first>=0&&last>first)return JSON.parse(raw.slice(first,last+1));
+  throw new Error("AI returned invalid JSON.");
+}
+function normalizeList(value){
+  return (Array.isArray(value)?value:[value]).map(v=>String(v??"").trim()).filter(Boolean);
+}
+function normalizeDesignJson(data){
+  const colors=normalizeList(data?.colors).slice(0,5).map(v=>{
+    const m=v.match(/#(?:[0-9A-Fa-f]{6})\b/);
+    const hex=m?m[0]:"";
+    const name=v.replace(/[-—:]?\s*#(?:[0-9A-Fa-f]{6})\b/g,"").replace(/^[-*]\s*/,"").trim();
+    return hex&&name?"- "+name+" — "+hex:v;
+  });
+  const fonts=normalizeList(data?.fonts).slice(0,2).map(v=>"- "+v.replace(/^[-*]\s*/,"").trim());
+  const layout=normalizeList(data?.layout).slice(0,5).map(v=>"- "+v.replace(/^[-*]\s*/,"").trim());
+  const execution=normalizeList(data?.execution).slice(0,5).map(v=>"- "+v.replace(/^[-*]\s*/,"").trim());
+  return [
+    "1) الفكرة:\n"+String(data?.idea||"").trim(),
+    "2) الستايل:\n"+String(data?.style||"").trim(),
+    "3) الألوان:\n"+colors.join("\n"),
+    "4) الخطوط:\n"+fonts.join("\n"),
+    "5) ترتيب العناصر:\n"+layout.join("\n"),
+    "6) الكوبي المقترح:\n"+String(data?.copy||"").trim(),
+    "7) التنفيذ:\n"+execution.join("\n")
+  ].join("\n\n").trim();
 }
 
 function designAssistantNeedsRepair(text){
   const t=String(text||"");
-  if(!/^1\) الفكرة:[\s\S]*\n\n2\) الستايل:[\s\S]*\n\n3\) الألوان:[\s\S]*\n\n4\) الخطوط:[\s\S]*\n\n5\) ترتيب العناصر:[\s\S]*\n\n6\) الكوبي المقترح:[\s\S]*\n\n7\) التنفيذ:/m.test(t)) return true;
-
+  const required=["1) الفكرة:","2) الستايل:","3) الألوان:","4) الخطوط:","5) ترتيب العناصر:","6) الكوبي المقترح:","7) التنفيذ:"];
+  if(!required.every(h=>t.includes(h)))return true;
   const colors=(t.match(/3\) الألوان:[\s\S]*?(?=\n\n4\) الخطوط:|$)/)||[""])[0];
   const fonts=(t.match(/4\) الخطوط:[\s\S]*?(?=\n\n5\) ترتيب العناصر:|$)/)||[""])[0];
   const layout=(t.match(/5\) ترتيب العناصر:[\s\S]*?(?=\n\n6\) الكوبي المقترح:|$)/)||[""])[0];
   const copy=(t.match(/6\) الكوبي المقترح:[\s\S]*?(?=\n\n7\) التنفيذ:|$)/)||[""])[0];
   const execution=(t.match(/7\) التنفيذ:[\s\S]*$/)||[""])[0];
-
-  if(!/#(?:[0-9A-Fa-f]{6})\b/.test(colors)) return true;
-  if(!/[-—].+[-—].+/.test(fonts)) return true;
-  if((layout.match(/(^|\n)-/g)||[]).length<2) return true;
-  if(copy.replace(/6\) الكوبي المقترح:/,"").trim().length<8) return true;
-  if(execution.replace(/7\) التنفيذ:/,"").trim().length<20) return true;
+  if(!/#(?:[0-9A-Fa-f]{6})\b/.test(colors))return true;
+  if((fonts.match(/(^|\n)-/g)||[]).length<1)return true;
+  if((layout.match(/(^|\n)-/g)||[]).length<3)return true;
+  if(copy.replace(/6\) الكوبي المقترح:/,"").trim().length<8)return true;
+  if((execution.match(/(^|\n)-/g)||[]).length<3)return true;
   return false;
 }
 function chatMessages(incoming){
@@ -167,36 +177,33 @@ async function handleAssistant(request,env){
       "حوّل الطلب لخطة تصميم محددة وقابلة للتنفيذ. لا تضف معلومات غير مذكورة عن النشاط أو البراند."
     ].join("\n");
 
-    let result=await runText(env,[
-      {role:"system",content:system},
-      {role:"user",content:userPrompt}
-    ],500,{temperature:0.10,top_p:0.70});
-
-    let normalized=normalizeAssistantOutput(result);
-
-    if(designAssistantNeedsRepair(normalized)){
-      const repairPrompt=[
-        "أعد كتابة الإجابة السابقة من الصفر وفق القالب الإجباري.",
-        "لا تشرح الخطأ ولا تعتذر.",
-        "كل قسم يجب أن يحتوي على نوع المعلومات الخاص به فقط.",
-        "الألوان = أسماء + HEX فقط.",
-        "الخطوط = اسم + حجم + استخدام.",
-        "ترتيب العناصر = عنصر + مكان + نسبة/حجم.",
-        "الكوبي = نص إعلاني حقيقي قصير.",
-        "التنفيذ = خطوات عملية، وليس ألواناً أو كلمات مفردة.",
-        "",
-        "الإجابة السابقة:",
-        normalized
-      ].join("\n");
-
-      result=await runText(env,[
-        {role:"system",content:system},
-        {role:"user",content:repairPrompt}
-      ],500,{temperature:0.05,top_p:0.65});
-      normalized=normalizeAssistantOutput(result);
+    const schemaResponse={type:"json_schema",json_schema:{name:"graphic_fiction_design_plan",strict:true,schema:DESIGN_SCHEMA}};
+    const structuredSystem=[
+      "أنت Creative Director محترف داخل Graphic Fiction AI.",
+      "اكتب المحتوى بالعربية المصرية الطبيعية. استخدم English فقط لأسماء الخطوط أو المصطلحات التصميمية الضرورية.",
+      "لا تخترع معلومات غير موجودة في طلب المستخدم.",
+      "أرجع JSON فقط مطابقاً للـschema. ممنوع Markdown وممنوع عناوين مرقمة.",
+      "idea: فكرة بصرية محددة.",
+      "style: معالجة بصرية تشمل الإضاءة والخلفية والجو العام.",
+      "colors: من 3 إلى 5 عناصر، وكل عنصر يجب أن يحتوي اسم اللون وكود HEX سداسي.",
+      "fonts: من 1 إلى 2 عنصر، وكل عنصر: اسم الخط — الحجم — الاستخدام.",
+      "layout: من 3 إلى 5 عناصر، وكل عنصر: العنصر — المكان — الحجم أو النسبة.",
+      "copy: من 1 إلى 3 جمل إعلانية طبيعية وقصيرة.",
+      "execution: من 3 إلى 5 خطوات عملية تبدأ بأفعال واضحة.",
+      "لو المشروع Instagram post استخدم 1080×1350 ما لم يطلب المستخدم مقاساً آخر."
+    ].join("\n");
+    const userPrompt=["نوع المشروع: "+type,"الفكرة/طلب العميل: "+idea,"التون المطلوب: "+tone].join("\n");
+    let structured;
+    try{
+      const raw=await runText(env,[{role:"system",content:structuredSystem},{role:"user",content:userPrompt}],650,{model:DESIGN_MODEL,temperature:0.05,top_p:0.70,timeout:20000,response_format:schemaResponse});
+      structured=normalizeDesignJson(parseJsonObject(raw));
+    }catch(firstError){
+      const raw=await runText(env,[{role:"system",content:structuredSystem+"\nأخرج JSON صحيحاً فقط بدون أي شرح."},{role:"user",content:userPrompt+"\nأعد المحاولة من البداية مع الالتزام الكامل بالـJSON schema."}],650,{model:DESIGN_MODEL,temperature:0.02,top_p:0.60,timeout:20000,response_format:{type:"json_object"}});
+      structured=normalizeDesignJson(parseJsonObject(raw));
     }
+    if(designAssistantNeedsRepair(structured))throw new Error("Design assistant produced an invalid structured plan.");
+    return json({text:structured,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
 
-    return json({text:normalized,trialMode:TRIAL_MODE,trialNotice:TRIAL_MODE_NOTICE});
   }catch(error){
     console.error("assistant",error);
     return json({error:"مساعد التصميم حصل فيه عطل مؤقت. جرّب تاني.",details:clean(error?.message||error,220),retryable:true,trialMode:TRIAL_MODE},503);
